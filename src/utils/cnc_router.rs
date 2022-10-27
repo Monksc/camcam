@@ -69,6 +69,8 @@ pub struct Tool {
     pub orientation: f64,
     pub tool_type: ToolType,
     pub smoothness: Smoothness,
+    pub feed_rate_of_cut: f64,
+    pub feed_rate_of_drill: f64,
 }
 
 #[derive(Copy, Clone)]
@@ -323,7 +325,7 @@ impl <T: std::io::Write> CNCRouter<T> {
         )
     }
 
-    pub fn set_tool_and_go_home(&mut self, tool_index: usize) {
+    pub fn set_tool_and_go_home(&mut self, tool_index: usize, feed_rate: f64) {
         self.current_tool_index = tool_index;
         self.go_home();
         self.write_gcode_str("");
@@ -336,7 +338,8 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.set_accuracy_control(self.tools[tool_index].smoothness);
         self.set_tool_offset_positive(
             self.tools[tool_index].index_in_machine,
-            self.tools[tool_index].offset_length
+            self.tools[tool_index].offset_length,
+            feed_rate
         );
         // self.write_gcode_string(format!("G54"));
     }
@@ -628,10 +631,12 @@ impl <T: std::io::Write> CNCRouter<T> {
         )
     }
 
-    pub fn set_tool_offset_positive(&mut self, tool_index: usize, offset_value: f64) {
+    pub fn set_tool_offset_positive(&mut self, tool_index: usize,
+        offset_value: f64, feed_rate: f64) {
         self.write_gcode_string(
-            format!("G43 Z{} H{}{}",
+            format!("G43 Z{} H{} F{}{}",
                 offset_value, tool_index,
+                feed_rate,
                 self.verbose_string(format!(" (Set tool offset for tool {}.)", tool_index))
             )
         )
@@ -919,6 +924,8 @@ impl Tool {
         back_angle: f64, orientation: f64,
         tool_type: ToolType,
         smoothness: Smoothness,
+        feed_rate_of_cut: f64,
+        feed_rate_of_drill: f64,
     ) -> Tool {
         Tool {
             name: name,
@@ -931,6 +938,8 @@ impl Tool {
             orientation: orientation,
             tool_type: tool_type,
             smoothness: smoothness,
+            feed_rate_of_cut: feed_rate_of_cut,
+            feed_rate_of_drill: feed_rate_of_drill,
         }
     }
 

@@ -43,11 +43,12 @@ impl <T: std::io::Write> GCodeCreator<T> {
 
     pub fn build_gcode_around_lines<J> (
         &mut self,
+        feed_rate: f64,
         path: &Vec<J>,
         follow_path: &Box<impl Fn (&mut cnc_router::CNCRouter<T>, &J, f64)>,
     ) {
         for j in path {
-            follow_path(&mut self.cnc_router, &j, self.feed_rate);
+            follow_path(&mut self.cnc_router, &j, feed_rate);
         }
     }
 
@@ -80,7 +81,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 }
                 self.cnc_router.write_gcode_comment(format!("CHANGED TOOL {}", tool_index));
 
-                self.cnc_router.set_tool_and_go_home(tool_index);
+                self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
                 self.cnc_router.set_spindle_on(false, self.spindle_speed);
                 let bit_diameter = 2.0 * tool.radius;
 
@@ -141,7 +142,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                                         &cnc_router::Coordinate::from(
                                             p.x, p.y, z_axis_off_cut + depth_of_cut,
                                         ),
-                                        self.feed_rate, false,
+                                        tool.feed_rate_of_cut, false,
                                     );
                                 } 
                             } else {
@@ -158,7 +159,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                                     &cnc_router::Coordinate::from(
                                         x, y, z_axis_off_cut + depth_of_cut,
                                     ),
-                                    self.feed_rate, false,
+                                    tool.feed_rate_of_drill, false,
                                 );
                             }
 
@@ -170,13 +171,13 @@ impl <T: std::io::Write> GCodeCreator<T> {
                                     &cnc_router::Coordinate::from(
                                         p.x, p.y, z_axis_off_cut + depth_of_cut,
                                     ),
-                                    self.feed_rate, false,
+                                    tool.feed_rate_of_cut, false,
                                 );
                                 self.cnc_router.move_to_coordinate(
                                     &cnc_router::Coordinate::from(
                                         p.x, p.y, z_axis_off_cut,
                                     ),
-                                    self.feed_rate, false,
+                                    tool.feed_rate_of_cut, false,
                                 );
                             }
                             cut_to = None;
@@ -188,7 +189,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                             self.cnc_router.move_to_coordinate(
                                 &cnc_router::Coordinate::from(
                                 p.x, p.y, z_axis_off_cut + depth_of_cut),
-                                self.feed_rate, false,
+                                tool.feed_rate_of_cut, false,
                             );
                         }
                     }
@@ -196,7 +197,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         &cnc_router::Coordinate::from(
                             self.cnc_router.get_pos().x, self.cnc_router.get_pos().y, z_axis_off_cut
                         ),
-                        self.feed_rate, false,
+                        tool.feed_rate_of_cut, false,
                     );
                 }
 
@@ -215,7 +216,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 continue
             }
             let z_axis_off_cut = self.z_axis_off_cut + tool.length; 
-            self.cnc_router.set_tool_and_go_home(tool_index);
+            self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
             for sign in &mut *signs {
                 for shape in sign.shapes() {
                     let point = start_path(&shape.lines()[0]);
@@ -224,13 +225,18 @@ impl <T: std::io::Write> GCodeCreator<T> {
                             point.x, point.y,
                             z_axis_off_cut + self.depth_of_cut
                         ),
-                        self.feed_rate, false
+                        tool.feed_rate_of_drill, false
                     );
-                    self.build_gcode_around_lines(shape.lines(), follow_path);
+                    self.build_gcode_around_lines(
+                        tool.feed_rate_of_cut,
+                        shape.lines(), follow_path,
+                    );
                 }
             }
         }
 
+
+        self.cnc_router.go_home();
         self.cnc_router.set_spindle_off();
         self.cnc_router.reset_program_and_end();
     }
