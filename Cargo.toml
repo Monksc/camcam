@@ -1,9 +1,9 @@
-# [lib]
-# name = "gcode_rust_libary"
-# path = "src/lib.rs"
+[lib]
+name = "gcode_rust_library"
+path = "src/lib.rs"
 
 [package]
-name = "creategcode"
+name = "gcode_rust_library"
 #name = "create_g_code"
 version = "0.1.0"
 edition = "2021"
