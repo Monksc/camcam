@@ -14,7 +14,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
         use_inches: bool, start_middle: bool, spindle_speed: f64,
         feed_rate: f64, z_axis_off_cut: f64, depth_of_cut: f64,
     ) -> GCodeCreator<T> {
-
         let mut gc = GCodeCreator {
             cnc_router: cnc_router,
             start_middle: start_middle,
@@ -54,6 +53,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
 
     pub fn build_gcode<J : lines_and_curves::Intersection + std::fmt::Debug + Clone> (
         &mut self,
+        do_cut_on_odd: bool,
         next_path : fn (&mut bit_path::PathItr<f64>) -> bool,
         signs : &mut Vec<sign::Sign<J> >,
         start_path: &Box<impl Fn (&J) -> lines_and_curves::Point >,
@@ -125,7 +125,8 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         );
 
                         let crosses_rect = sign.line_collides_wth_rect(&rect);
-                        let is_down = can_be_down && (seen % 2 == 0) && !crosses_rect;
+                        let is_down = can_be_down &&
+                            ((seen % 2 == 1) == do_cut_on_odd) && !crosses_rect;
                         if crosses_rect {
                             new_cuttable_rects.add_rect(&lines_and_curves::Point::from(x,y));
                         }

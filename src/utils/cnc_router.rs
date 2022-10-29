@@ -105,6 +105,14 @@ impl <T: std::io::Write> CNCRouter<T> {
         }
     }
 
+    fn format_float(&self, x: f64) -> String {
+        if x < 0.0 {
+            format!("{:.5}", x)
+        } else {
+            format!("{:.6}", x)
+        }
+    }
+
     pub fn generate_header(&mut self, use_inches: bool) {
         self.write_gcode_str(
             "(Using G0 which travels along dogleg path.)"
@@ -191,10 +199,10 @@ impl <T: std::io::Write> CNCRouter<T> {
             self.write_gcode_string(format!(
                 "G10 L1 P{} axes R{} I{} J{} Q{}{}",
                 i+1,
-                self.tools[i].radius,
-                self.tools[i].front_angle,
-                self.tools[i].back_angle,
-                self.tools[i].orientation,
+                self.format_float(self.tools[i].radius),
+                self.format_float(self.tools[i].front_angle),
+                self.format_float(self.tools[i].back_angle),
+                self.format_float(self.tools[i].orientation),
                 self.verbose_string(String::from(" (Set tool P - tool number R - radius of tool I - front angle (lathe) J - back angle (lathe) Q - orientation (lathe))"))
             ));
         }
@@ -264,7 +272,15 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn wait_until_extruder_reaches(&mut self, to: f64) {
         // TODO: Add in the to function
         self.write_gcode_string(
-            format!("M109{}", self.verbose_string(format!(" (Wait until extruder reaches to {}.)", to)))
+            format!(
+                "M109{}",
+                self.verbose_string(
+                    format!(
+                        " (Wait until extruder reaches to {}.)",
+                        self.format_float(to)
+                    )
+                )
+            )
         )
     }
 
@@ -298,7 +314,7 @@ impl <T: std::io::Write> CNCRouter<T> {
 
         self.write_gcode_string(
             format!(
-                "S{} M0{}{}", speed, if counter_clockwise { 4 } else { 3 },
+                "S{} M0{}{}", self.format_float(speed), if counter_clockwise { 4 } else { 3 },
                 self.verbose_string(String::from(
                     if counter_clockwise {
                         " (Set spindle on to counter clockwise.)"
@@ -362,7 +378,9 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.pos = *pos;
         self.write_gcode_string(
             format!("G00 X{} Y{} Z{}{}",
-                self.pos.x, self.pos.y, self.pos.z,
+                self.format_float(self.pos.x),
+                self.format_float(self.pos.y),
+                self.format_float(self.pos.z),
                 self.verbose_str(
                     " (Moves to position specified rapid.)"
                 ),
@@ -377,7 +395,10 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.write_gcode_string(
             format!("G{} X{} Y{} Z{} F{}{}",
                 if can_be_skipped { "31" } else { "01" },
-                self.pos.x, self.pos.y, self.pos.z, feed_rate,
+                self.format_float(self.pos.x),
+                self.format_float(self.pos.y),
+                self.format_float(self.pos.z),
+                self.format_float(feed_rate),
                 self.verbose_string(
                     String::from(" (Cuts to position specified.)") +
                     if can_be_skipped { " Can be skipped." } else { "" }
@@ -401,7 +422,12 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn exact_stop(&mut self, pos: &Coordinate) {
         self.pos = *pos;
         self.write_gcode_string(
-            format!("G09 X{} Y{} Z{}", self.pos.x, self.pos.y, self.pos.z)
+            format!(
+                "G09 X{} Y{} Z{}",
+                self.format_float(self.pos.x),
+                self.format_float(self.pos.y),
+                self.format_float(self.pos.z)
+            )
         )
     }
 
@@ -417,14 +443,18 @@ impl <T: std::io::Write> CNCRouter<T> {
         // self.referance_pos.z = self.home_pos.z;
         self.write_gcode_string(
             format!("G00 X{} Y{} Z{}{}",
-                self.pos.x, self.pos.y, self.home_pos.z,
+                self.format_float(self.pos.x),
+                self.format_float(self.pos.y),
+                self.format_float(self.home_pos.z),
                 if self.verbose {String::from(" (return home z)")}
                 else { String::from("") }
             )
         );
         self.write_gcode_string(
             format!("G00 X{} Y{} Z{}{}",
-                self.home_pos.x, self.home_pos.y, self.home_pos.z,
+                self.format_float(self.home_pos.x),
+                self.format_float(self.home_pos.y),
+                self.format_float(self.home_pos.z),
                 if self.verbose {String::from(" (return home)")}
                 else { String::from("") }
             )
@@ -442,7 +472,9 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.referance_pos = d_pos;
         self.write_gcode_string(
             format!("G91 G28 X{} Y{} Z{} G90{}",
-                d_pos.x, d_pos.y, d_pos.z,
+                self.format_float(d_pos.x),
+                self.format_float(d_pos.y),
+                self.format_float(d_pos.z),
                 if self.verbose {String::from(" (return home through point specified)")}
                 else { String::from("") }
             )
@@ -454,7 +486,9 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.second_referance_pos = intermediate_pos;
         self.write_gcode_string(
             format!("G29 X{} Y{} Z{}{}",
-                intermediate_pos.x, intermediate_pos.y, intermediate_pos.z,
+                self.format_float(intermediate_pos.x),
+                self.format_float(intermediate_pos.y),
+                self.format_float(intermediate_pos.z),
                 if self.verbose {String::from(" (return to reference position through point specified.)")}
                 else { String::from("") }
             )
@@ -465,7 +499,9 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.pos = self.second_referance_pos;
         self.write_gcode_string(
             format!("G30 X{} Y{} Z{}{}",
-                intermediate_pos.x, intermediate_pos.y, intermediate_pos.z,
+                self.format_float(intermediate_pos.x),
+                self.format_float(intermediate_pos.y),
+                self.format_float(intermediate_pos.z),
                 if self.verbose {String::from(" (return to second reference position through point specified.)")}
                 else { String::from("") }
             )
@@ -544,7 +580,11 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.write_gcode_string(
             format!("G0{} X{} Y{} I{} J{}",
                 if is_clock_wise {2} else {3},
-                end_pos.x, end_pos.y, offset.x, offset.y)
+                self.format_float(end_pos.x),
+                self.format_float(end_pos.y),
+                self.format_float(offset.x),
+                self.format_float(offset.y)
+            )
         );
         self.pos = *end_pos;
     }
@@ -634,9 +674,13 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn set_tool_offset_positive(&mut self, tool_index: usize,
         offset_value: f64, feed_rate: f64) {
         self.write_gcode_string(
-            format!("G43 Z{} H{} F{}{}",
-                offset_value, tool_index,
-                feed_rate,
+            // format!("G43 Z{} H{} F{}{}",
+            //     offset_value, tool_index,
+            //     feed_rate,
+            //     self.verbose_string(format!(" (Set tool offset for tool {}.)", tool_index))
+            // )
+            format!("G43 H{} {}",
+                tool_index,
                 self.verbose_string(format!(" (Set tool offset for tool {}.)", tool_index))
             )
         )
@@ -654,7 +698,7 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn set_tool_offset(&mut self, offset: f64) {
         self.write_gcode_string(
             format!("G43.1 Z{}{}",
-                offset,
+                self.format_float(offset),
                 self.verbose_string(format!(" (Set current tool offset to be {}.)", offset))
             )
         )
@@ -679,8 +723,10 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn scaling_factor_on(&mut self, scaling_pivot: Coordinate, scalor_value: f64) {
         self.write_gcode_string(
             format!("G51 I{} J{} K{} P{}{}",
-                scaling_pivot.x, scaling_pivot.y, scaling_pivot.z,
-                scalor_value,
+                self.format_float(scaling_pivot.x),
+                self.format_float(scaling_pivot.y),
+                self.format_float(scaling_pivot.z),
+                self.format_float(scalor_value),
                 self.verbose_string(format!(" (Cancel scaling factor.)"))
             )
         )
@@ -689,7 +735,9 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn local_coordinate_system_set(&mut self, coordinate: Coordinate) {
         self.write_gcode_string(
             format!("G52 X{} Y{} Z{}{}",
-                coordinate.x, coordinate.y, coordinate.z,
+                self.format_float(coordinate.x),
+                self.format_float(coordinate.y),
+                self.format_float(coordinate.z),
                 self.verbose_string(format!(" (Sets local coordinate system.)"))
             )
         )
@@ -698,7 +746,9 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn machine_coordinate_system_set(&mut self, coordinate: Coordinate) {
         self.write_gcode_string(
             format!("G53 X{} Y{} Z{}{}",
-                coordinate.x, coordinate.y, coordinate.z,
+                self.format_float(coordinate.x),
+                self.format_float(coordinate.y),
+                self.format_float(coordinate.z),
                 self.verbose_string(format!(" (Sets machine coordinate system.)"))
             )
         )
@@ -713,7 +763,9 @@ impl <T: std::io::Write> CNCRouter<T> {
                 } else {
                     (work_coordinate + 53).to_string()
                 },
-                coordinate.x, coordinate.y, coordinate.z,
+                self.format_float(coordinate.x),
+                self.format_float(coordinate.y),
+                self.format_float(coordinate.z),
                 self.verbose_string(format!(" (Sets the work coordinate.)"))
             )
         )
@@ -746,7 +798,9 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn tap_make_hole(&mut self, z_distance: f64, spindle_speed: f64) {
         self.write_gcode_string(
             format!("M3 G91 G3 Z{} F{} M4 G32 Z{} G90 {}{}",
-                z_distance, spindle_speed, -z_distance,
+                self.format_float(z_distance),
+                self.format_float(spindle_speed),
+                self.format_float(-z_distance),
                 if let SpindleState::Clockwise = self.spindle_state {
                     format!("M03 S{}", self.spindle_clock_speed)
                 } else if let SpindleState::CounterClockwise = self.spindle_state {
@@ -778,7 +832,9 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn coordinate_system_rotation(&mut self, x: f64, y: f64, degrees: f64) {
         self.write_gcode_string(
             format!("G68 X{} Y{} R{}{}",
-                x, y, degrees,
+                self.format_float(x),
+                self.format_float(y),
+                self.format_float(degrees),
                 if self.verbose {String::from(" (Coordinate system rotating around the x and y axis at r degrees.)")} else {String::new()})
         )
     }
@@ -793,7 +849,13 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn high_speed_peck_drilling_cycle(&mut self, pos: Coordinate, margin_depth: f64, depth_of_cut: f64, feed_rate: f64, steps: u64) {
         self.write_gcode_string(
             format!("G73 X{} Y{} Z{} R{} Q{} F{} K{}{}",
-                pos.x, pos.y, pos.z, margin_depth, depth_of_cut, feed_rate, steps,
+                self.format_float(pos.x),
+                self.format_float(pos.y),
+                self.format_float(pos.z),
+                self.format_float(margin_depth),
+                self.format_float(depth_of_cut),
+                self.format_float(feed_rate),
+                steps,
                 if self.verbose {String::from(" (High speed peck drilling cycle.)")} else {String::new()})
         )
     }
@@ -802,7 +864,11 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn left_hand_threading_cycle(&mut self, pos: Coordinate, depth_of_cut: f64, feed_rate: f64) {
         self.write_gcode_string(
             format!("G74 X{} Y{} Z{} R{} F{}{}",
-                pos.x, pos.y, pos.z, depth_of_cut, feed_rate,
+                self.format_float(pos.x),
+                self.format_float(pos.y),
+                self.format_float(pos.z),
+                self.format_float(depth_of_cut),
+                self.format_float(feed_rate),
                 if self.verbose {String::from(" (Left hand threading cycle.")} else {String::new()})
         )
     }
@@ -810,7 +876,14 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn fanuc_fine_boring_cycle(&mut self, pos: Coordinate, depth_of_cut: f64, shift_at_hole: f64, dwell_time: f64, feed_rate: f64, steps: u64) {
         self.write_gcode_string(
             format!("G76 X{} Y{} Z{} R{} Q{} P{} F{} K{}{}",
-                pos.x, pos.y, pos.z, depth_of_cut, shift_at_hole, dwell_time, feed_rate, steps,
+                self.format_float(pos.x),
+                self.format_float(pos.y),
+                self.format_float(pos.z),
+                self.format_float(depth_of_cut),
+                self.format_float(shift_at_hole),
+                self.format_float(dwell_time),
+                self.format_float(feed_rate),
+                steps,
                 if self.verbose {String::from(" (Creates hole at position given R depth, Q shift, P time, F feed rate and K steps.)")} else {String::new()})
         )
     }
@@ -818,7 +891,12 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn fanuc_boring_cycle(&mut self, pos: Coordinate, starting_position_above_hole: f64, feed_rate: f64, steps: u64) {
         self.write_gcode_string(
             format!("G85 X{} Y{} Z{} R{} F{} K{}{}",
-                pos.x, pos.y, pos.z, starting_position_above_hole, feed_rate, steps,
+                self.format_float(pos.x),
+                self.format_float(pos.y),
+                self.format_float(pos.z),
+                self.format_float(starting_position_above_hole),
+                self.format_float(feed_rate),
+                steps,
                 if self.verbose {String::from(" (Creates hole at position given R depth, Q shift, P time, F feed rate and K steps.)")} else {String::new()})
         )
     }
@@ -834,7 +912,12 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn drilling_cycle(&mut self, pos: Coordinate, a: f64, r: f64, l: f64) {
         self.write_gcode_string(
             format!("G81 X{} Y{} Z{} A{} R{} L{}{}",
-                pos.x, pos.y, pos.z, a, r, l,
+                self.format_float(pos.x),
+                self.format_float(pos.y),
+                self.format_float(pos.z),
+                self.format_float(a),
+                self.format_float(r),
+                self.format_float(l),
                 if self.verbose {String::from(" (Drilling cycle.)")} else {String::new()})
         )
     }
@@ -854,7 +937,7 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.write_gcode_string(
             format!("G83{} F{}{}{}{}{}{}{}{}{}{} Z{}{}",
                 CNCRouter::<T>::option_param_str(" E", e_chip_clean_rpm),
-                feed_rate,
+                self.format_float(feed_rate),
                 CNCRouter::<T>::option_param_str(" I", i_size_of_first_peck_depth),
                 CNCRouter::<T>::option_param_str(" J", j_reduce_peck_depth),
                 CNCRouter::<T>::option_param_str(" K", k_minimum_depth_of_peck),
@@ -874,7 +957,7 @@ impl <T: std::io::Write> CNCRouter<T> {
         r_position_on_r_plane: Option<f64>, s_rpm: f64, x_axis_motion: Option<f64>, z: f64) {
         self.write_gcode_string(
             format!("G84 F{}{} S{}{} Z{}{}",
-                feed_rate,
+                self.format_float(feed_rate),
                 CNCRouter::<T>::option_param_str(" R", r_position_on_r_plane),
                 s_rpm,
                 CNCRouter::<T>::option_param_str(" X", x_axis_motion),

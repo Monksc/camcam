@@ -39,12 +39,24 @@ pub trait Intersection {
 }
 
 #[derive(Debug, Clone)]
+pub enum AllIntersections {
+    Rectangle(Rectangle),
+    LineSegment(LineSegment),
+}
+
+#[derive(Debug, Clone)]
 pub struct Rectangle {
     start_point: Point,
     end_point: Point,
 }
 
 impl Rectangle {
+    pub fn zero() -> Self {
+        Self {
+            start_point: Point::zero(),
+            end_point: Point::zero(),
+        }
+    }
     pub fn from(start_point: Point, end_point: Point) -> Self {
         Self {
             start_point: start_point,
@@ -104,6 +116,59 @@ impl Rectangle {
     pub fn mid_x(&self) -> f64 {
         (self.start_point.x + self.end_point.x) / 2.0
     }
+
+    pub fn join(&self, rect: &Rectangle) -> Rectangle {
+        Rectangle::from(
+            Point::from(
+                vec![
+                    self.start_point.x, self.end_point.x,
+                    rect.start_point.x, rect.end_point.x,
+                ].iter().cloned().fold(0./0., f64::min),
+                vec![
+                    self.start_point.y, self.end_point.y,
+                    rect.start_point.y, rect.end_point.y,
+                ].iter().cloned().fold(0./0., f64::min),
+            ),
+            Point::from(
+                vec![
+                    self.start_point.x, self.end_point.x,
+                    rect.start_point.x, rect.end_point.x,
+                ].iter().cloned().fold(0./0., f64::max),
+                vec![
+                    self.start_point.y, self.end_point.y,
+                    rect.start_point.y, rect.end_point.y,
+                ].iter().cloned().fold(0./0., f64::max),
+            ),
+        )
+    }
+}
+
+pub fn bounding_box<T: Intersection>(intersections: &Vec<T>) -> Option<Rectangle> {
+    let start_rect : Rectangle;
+    if let Some(r) = intersections.first() {
+        start_rect = r.bounding_box();
+    } else {
+        return None;
+    }
+
+    Some(intersections.iter().fold(start_rect, |rect, line| -> Rectangle {
+        rect.join(&line.bounding_box())
+    }))
+}
+
+pub fn bounding_box_itr<T: Intersection, I>(mut intersections: I) -> Option<Rectangle> 
+where I: Iterator<Item=T>
+{
+    let start_rect : Rectangle;
+    if let Some(r) = intersections.next() {
+        start_rect = r.bounding_box();
+    } else {
+        return None;
+    }
+
+    Some(intersections.fold(start_rect, |rect, line| -> Rectangle {
+        rect.join(&line.bounding_box())
+    }))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -561,6 +626,52 @@ impl Iterator for RectangleConnectionsItr {
     }
 }
 
+impl Intersection for AllIntersections {
+    fn y(&self, next: &Self, x: f64) -> Vec<f64> {
+        match (self, next) {
+            (AllIntersections::Rectangle(r1), AllIntersections::Rectangle(r2)) => {
+                r1.y(&r2, x)
+            }
+            (AllIntersections::LineSegment(s1), AllIntersections::LineSegment(s2)) => {
+                Intersection::y(s1, &s2, x)
+            }
+            _ => {
+                panic!("Their are multiple types under AllIntersections in the same sign.shape");
+            }
+        }
+    }
+    fn times_cross_line(&self, line: &LineSegment) -> usize {
+        match self {
+            AllIntersections::Rectangle(r) => {
+                r.times_cross_line(line)
+            }
+            AllIntersections::LineSegment(s) => {
+                s.times_cross_line(line)
+            }
+        }
+    }
+    fn intersects_rectangle(&self, rect : &Rectangle) -> bool {
+        match self {
+            AllIntersections::Rectangle(r) => {
+                r.intersects_rectangle(&rect)
+            }
+            AllIntersections::LineSegment(s) => {
+                s.intersects_rectangle(&rect)
+            }
+        }
+    }
+    fn bounding_box(&self) -> Rectangle {
+        match self {
+            AllIntersections::Rectangle(r) => {
+                r.bounding_box()
+            }
+            AllIntersections::LineSegment(s) => {
+                s.bounding_box()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -766,5 +877,24 @@ mod test {
 
         assert_eq!(ray_v_before_touching.times_cross_line(&ray_v_after_touching), 0);
         assert_eq!(ray_v_after_touching.times_cross_line(&ray_v_before_touching), 0);
+    }
+    #[test]
+    pub fn test_rect_join() {
+        let r1 = Rectangle::from(
+            Point::from(3.0, 4.0),
+            Point::from(5.0, 7.0),
+        );
+
+        let r2 = Rectangle::from(
+            Point::from(1.0, 8.0),
+            Point::from(6.0, 1.0),
+        );
+
+        let joined = r1.join(&r2);
+
+        assert_eq!(joined.start_point.x, 1.0);
+        assert_eq!(joined.start_point.y, 1.0);
+        assert_eq!(joined.end_point.x,   6.0);
+        assert_eq!(joined.end_point.y,   8.0);
     }
 }

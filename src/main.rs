@@ -127,7 +127,7 @@ fn main() {
                 feed_rate_of_drill:50.0 * 10000.0,
             },
         ],
-        true,
+        false, // verbose
         cnc_router::Coordinate::from(0.0, 0.0, 3.0),
         // StringHolder::new()
         Output::new()
@@ -145,6 +145,7 @@ fn main() {
     );
 
     gc.build_gcode(
+        false,
         // bit_path::Path::spiral_in_out,
         bit_path::Path::path_x_then_y,
         &mut vec![
