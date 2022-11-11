@@ -40,6 +40,9 @@ impl std::io::Write for Output {
 
 
 fn main() {
+    let feed_rate_of_cut = 108.0; // * 10000.0;
+    let feed_rate_of_drill = 50.0; // * 10000.0;
+
     let cnc = cnc_router::CNCRouter::from(
         vec![
             cnc_router::Tool {
@@ -52,9 +55,11 @@ fn main() {
                 back_angle: 0.0,
                 orientation: 0.0,
                 tool_type: cnc_router::ToolType::PartialCutBroad,
-                smoothness: cnc_router::Smoothness::Medium,
-                feed_rate_of_cut: 108.0 * 10000.0,
-                feed_rate_of_drill: 50.0 * 10000.0,
+                // smoothness: cnc_router::Smoothness::Medium,
+                smoothness:        cnc_router::Smoothness::Finish,
+                feed_rate_of_cut: feed_rate_of_cut,
+                feed_rate_of_drill: feed_rate_of_drill,
+                offset: 0.2,
             },
             cnc_router::Tool {
                 name:              String::from("1/8 Inch Bit"),
@@ -66,52 +71,57 @@ fn main() {
                 back_angle:        0.0,
                 orientation:       0.0,
                 tool_type:         cnc_router::ToolType::FullCutBroad,
-                smoothness:        cnc_router::Smoothness::Medium,
-                feed_rate_of_cut:  108.0 * 10000.0,
-                feed_rate_of_drill:50.0 * 10000.0,
-            },
-            cnc_router::Tool {
-                name:              String::from("1/16 Inch Bit"),
-                index_in_machine:  5,
-                offset_length:     0.5,
-                radius:            0.0625/2.0,
-                length:            0.0,
-                front_angle:       0.0,
-                back_angle:        0.0,
-                orientation:       0.0,
-                tool_type:         cnc_router::ToolType::FullCutBroad,
+                // smoothness:        cnc_router::Smoothness::Medium,
                 smoothness:        cnc_router::Smoothness::Finish,
-                feed_rate_of_cut:  108.0 * 10000.0,
-                feed_rate_of_drill:50.0 * 10000.0,
+                feed_rate_of_cut: feed_rate_of_cut,
+                feed_rate_of_drill: feed_rate_of_drill,
+                offset: 0.2,
             },
-            cnc_router::Tool {
-                name:              String::from("0.02 Inch Bit"),
-                index_in_machine:  2,
-                offset_length:     0.5,
-                radius:            0.02/2.0,
-                length:            0.0,
-                front_angle:       0.0,
-                back_angle:        0.0,
-                orientation:       0.0,
-                tool_type:         cnc_router::ToolType::FullCutBroad,
-                smoothness:        cnc_router::Smoothness::Finish,
-                feed_rate_of_cut:  108.0 * 10000.0,
-                feed_rate_of_drill:50.0 * 10000.0,
-            },
-            cnc_router::Tool {
-                name:              String::from("Braille Bit"),
-                index_in_machine:  6,
-                offset_length:     0.5,
-                radius:            0.02/2.0,
-                length:            0.0,
-                front_angle:       0.0,
-                back_angle:        0.0,
-                orientation:       0.0,
-                tool_type:         cnc_router::ToolType::Braille,
-                smoothness:        cnc_router::Smoothness::Finish,
-                feed_rate_of_cut:  108.0 * 10000.0,
-                feed_rate_of_drill:50.0 * 10000.0,
-            },
+            // cnc_router::Tool {
+            //     name:              String::from("1/16 Inch Bit"),
+            //     index_in_machine:  5,
+            //     offset_length:     0.5,
+            //     radius:            0.0625/2.0,
+            //     length:            0.0,
+            //     front_angle:       0.0,
+            //     back_angle:        0.0,
+            //     orientation:       0.0,
+            //     tool_type:         cnc_router::ToolType::FullCutBroad,
+            //     smoothness:        cnc_router::Smoothness::Finish,
+            //     feed_rate_of_cut: feed_rate_of_cut,
+            //     feed_rate_of_drill: feed_rate_of_drill,
+            //     offset: 1.0,
+            // },
+            // cnc_router::Tool {
+            //     name:              String::from("0.02 Inch Bit"),
+            //     index_in_machine:  2,
+            //     offset_length:     0.5,
+            //     radius:            0.02/2.0,
+            //     length:            0.0,
+            //     front_angle:       0.0,
+            //     back_angle:        0.0,
+            //     orientation:       0.0,
+            //     tool_type:         cnc_router::ToolType::FullCutBroad,
+            //     smoothness:        cnc_router::Smoothness::Finish,
+            //     feed_rate_of_cut:  feed_rate_of_cut,
+            //     feed_rate_of_drill:feed_rate_of_drill,
+            //     offset: 1.0,
+            // },
+            // cnc_router::Tool {
+            //     name:              String::from("Braille Bit"),
+            //     index_in_machine:  6,
+            //     offset_length:     0.5,
+            //     radius:            0.02/2.0,
+            //     length:            0.0,
+            //     front_angle:       0.0,
+            //     back_angle:        0.0,
+            //     orientation:       0.0,
+            //     tool_type:         cnc_router::ToolType::Braille,
+            //     smoothness:        cnc_router::Smoothness::Finish,
+            //     feed_rate_of_cut:  feed_rate_of_cut,
+            //     feed_rate_of_drill:feed_rate_of_drill,
+            //     offset: 1.0,
+            // },
             cnc_router::Tool {
                 name:              String::from("Text / Lettering Bit"),
                 index_in_machine:  7,
@@ -123,12 +133,13 @@ fn main() {
                 orientation:       0.0,
                 tool_type:         cnc_router::ToolType::Text,
                 smoothness:        cnc_router::Smoothness::Finish,
-                feed_rate_of_cut:  108.0 * 10000.0,
-                feed_rate_of_drill:50.0 * 10000.0,
+                feed_rate_of_cut:  feed_rate_of_cut,
+                feed_rate_of_drill:feed_rate_of_drill,
+                offset: 1.0,
             },
         ],
         false, // verbose
-        cnc_router::Coordinate::from(0.0, 0.0, 3.0),
+        cnc_router::Coordinate::from(0.0, 0.0, 10.0),
         // StringHolder::new()
         Output::new()
     );
@@ -136,7 +147,7 @@ fn main() {
     let mut gc = gcode_creator::GCodeCreator::from(
         cnc,
         true, // use_inches
-        false, // start middle
+        true, // start middle
         12000.0, // spindle_speed
         108.0 * 10000.0, // Feed Rate
         // 50.0, // feed_rate
@@ -146,8 +157,8 @@ fn main() {
 
     gc.build_gcode(
         false,
-        // bit_path::Path::spiral_in_out,
-        bit_path::Path::path_x_then_y,
+        bit_path::Path::spiral_in_out,
+        // bit_path::Path::path_x_then_y,
         &mut vec![
             sign::Sign::from(
                 lines_and_curves::Rectangle::from(
@@ -161,25 +172,23 @@ fn main() {
                             lines_and_curves::Point::from(6.0, 4.0), // Right
                             lines_and_curves::Point::from(4.0, 6.0), // Bottom
                             lines_and_curves::Point::from(2.0, 4.0), // Left
-                        ], true),
+                        ], true)
+                        .iter()
+                        .map(|x| lines_and_curves::AllIntersections::LineSegment(x.clone()))
+                        .collect(),
+                    ),
+                    sign::Shape::from(
+                        lines_and_curves::Rectangle::from(
+                            lines_and_curves::Point::from(2.0, 2.0),
+                            lines_and_curves::Point::from(6.0, 6.0),
+                        )
+                        .to_lines()
+                        .iter()
+                        .map(|x| lines_and_curves::AllIntersections::LineSegment(x.clone()))
+                        .collect(),
                     ),
                 ],
             ),
         ],
-        &Box::from(|line: &lines_and_curves::LineSegment| -> lines_and_curves::Point {
-            line.point1()
-        }),
-        &Box::from(|router: &mut cnc_router::CNCRouter<Output>,
-            line: &lines_and_curves::LineSegment, feed_rate: f64| {
-            let p = line.point2();
-            router.move_to_coordinate(
-                &cnc_router::Coordinate::from(
-                    p.x, p.y,
-                    router.get_pos().z
-                ),
-                feed_rate,
-                false,
-            );
-        })
     );
 }
