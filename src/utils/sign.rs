@@ -193,9 +193,6 @@ impl<T: lines_and_curves::Intersection + Clone> ContainsRectangle<T> {
 
     fn contains_rect(&self, rect: &lines_and_curves::Rectangle) -> bool {
         use crate::utils::lines_and_curves::Intersection;
-        if !self.bounding_rect.intersects_rectangle(&rect) {
-            eprintln!("ERROR: Shape.contains_rect(rect) self.bounding_rect.intersects_rectangle(rect) = false");
-        }
         self.bounding_rect.intersects_rectangle(&rect) && self.split.contains_rect(rect)
     }
 }
@@ -273,7 +270,6 @@ impl<T: lines_and_curves::Intersection + Clone> SplitOrLines<T> {
     fn contains_rect(&self, rect: &lines_and_curves::Rectangle) -> bool {
         match self {
             SplitOrLines::Split(contains_rects) => {
-                eprintln!("ERROR: SplitOrLines.contains_rects(rect) self is SplitOrLines::Split but shouldn't be.");
                 for cr in contains_rects {
                     if cr.contains_rect(rect) {
                         return true;
