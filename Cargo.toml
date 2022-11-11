@@ -1,10 +1,9 @@
 [lib]
-name = "gcode_rust_library"
+name = "camcam"
 path = "src/lib.rs"
 
 [package]
-name = "gcode_rust_library"
-#name = "create_g_code"
+name = "camcam"
 version = "0.1.0"
 edition = "2021"
 
