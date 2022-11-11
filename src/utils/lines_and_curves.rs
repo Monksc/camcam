@@ -41,10 +41,11 @@ pub trait Intersection {
 #[derive(Debug, Clone)]
 pub enum AllIntersections {
     Rectangle(Rectangle),
+    SoftLineSegment(LineSegment),
     LineSegment(LineSegment),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Rectangle {
     start_point: Point,
     end_point: Point,
@@ -141,6 +142,27 @@ impl Rectangle {
             ),
         )
     }
+
+    pub fn to_lines(&self) -> Vec<LineSegment> {
+        vec![
+            LineSegment::from(
+                self.start_point,
+                Point::from(self.end_point.x, self.start_point.y),
+            ),
+            LineSegment::from(
+                Point::from(self.end_point.x, self.start_point.y),
+                self.end_point,
+            ),
+            LineSegment::from(
+                self.end_point,
+                Point::from(self.start_point.x, self.end_point.y),
+            ),
+            LineSegment::from(
+                Point::from(self.start_point.x, self.end_point.y),
+                self.start_point,
+            ),
+        ]
+    }
 }
 
 pub fn bounding_box<T: Intersection>(intersections: &Vec<T>) -> Option<Rectangle> {
@@ -171,7 +193,7 @@ where I: Iterator<Item=T>
     }))
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
@@ -192,7 +214,7 @@ impl Point {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LineSegment {
     p1: Point,
     p2: Point,
@@ -346,27 +368,48 @@ impl LineSegment {
 
 impl Intersection for LineSegment {
     fn y(&self, next: &Self, x: f64) -> Vec<f64> {
-        if let Some(y) = self.y(x) {
-            return vec![
-                y
-            ];
-        }
-
-        if let Some(y) = (LineSegment::from_include(
-                self.p1,
-                self.p2,
-                true,
-                true
-            )).y(x) {
-
-            if (self.p1.x > self.p2.x && next.p2.x > next.p1.x) || 
-                (self.p1.x < self.p2.x && next.p2.x < next.p1.x) {
-                return vec![
-                    y
-                ];
+        let contains_x =
+            (self.p1.x < self.p2.x && x >= self.p1.x && x < self.p2.x) ||
+            (self.p1.x > self.p2.x && x <= self.p1.x && x > self.p2.x);
+        let end_x = x == self.p2.x;
+        let lines_on_same_side_as_x =
+            (self.p1.x >= x && self.p2.x >= x && next.p1.x >= x && next.p2.x > x) ||
+            (self.p1.x <= x && self.p2.x <= x && next.p1.x <= x && next.p2.x < x);
+        if let Some((b, m)) = self.y_intercept_and_slope() {
+            if contains_x || (end_x && lines_on_same_side_as_x) {
+                return vec![m * x + b];
+            } else {
+                return Vec::new();
             }
+        } else if self.p1.x == x {
+            return vec![
+                self.p1.y,
+            ];
+        } else {
+            return Vec::new();
         }
-        return Vec::new()
+
+        // if let Some(y) = self.y(x) {
+        //     return vec![
+        //         y
+        //     ];
+        // }
+
+        // if let Some(y) = (LineSegment::from_include(
+        //         self.p1,
+        //         self.p2,
+        //         true,
+        //         true
+        //     )).y(x) {
+
+        //     if (self.p1.x > self.p2.x && next.p2.x > next.p1.x) ||
+        //         (self.p1.x < self.p2.x && next.p2.x < next.p1.x) {
+        //         return vec![
+        //             y
+        //         ];
+        //     }
+        // }
+        // return Vec::new()
     }
     fn times_cross_line(&self, line: &LineSegment) -> usize {
         if match (self.y_intercept_and_slope(), line.y_intercept_and_slope()) {
@@ -439,33 +482,147 @@ impl Intersection for LineSegment {
     }
 }
 
+impl cnc_router::CNCPath for LineSegment {
+    fn to_path(
+        &self
+    ) -> Vec<cnc_router::OptionalCoordinate> {
+        vec![
+            cnc_router::OptionalCoordinate::from(
+                Some(self.p2.x),
+                Some(self.p2.y),
+                None,
+            )
+        ]
+    }
+
+    fn is_connected(&self) -> bool {
+        true
+    }
+
+    fn start_path(&self) -> cnc_router::Coordinate {
+        cnc_router::Coordinate::from(
+            self.p1.x,
+            self.p1.y,
+            0.0
+        )
+    }
+}
+
 impl Intersection for Rectangle {
     fn y(&self, _next: &Self, x: f64) -> Vec<f64> {
         if self.contains_x(x) {
-            Vec::new()
-        } else {
             vec![
                 self.start_point.y,
                 self.end_point.y,
             ]
+        } else {
+            Vec::new()
         }
     }
 
     fn times_cross_line(&self, line: &LineSegment) -> usize {
-        if line.intersects_rectangle(self) {
-            1
-        } else {
-            0
-        }
+        LineSegment::from_ray(
+            self.start_point,
+            Point::from(self.end_point.x, self.start_point.y),
+        ).times_cross_line(line)
+            +
+        LineSegment::from_ray(
+            Point::from(self.end_point.x, self.start_point.y),
+            self.end_point,
+        ).times_cross_line(line)
+            +
+        LineSegment::from_ray(
+            self.end_point,
+            Point::from(self.start_point.x, self.end_point.y),
+        ).times_cross_line(line)
+            +
+        LineSegment::from_ray(
+            Point::from(self.start_point.x, self.end_point.y),
+            self.start_point,
+        ).times_cross_line(line)
+        // if line.intersects_rectangle(self) {
+        //     1
+        // } else {
+        //     0
+        // }
     }
 
     fn intersects_rectangle(&self, rect : &Rectangle) -> bool {
-        (self.contains_x(rect.start_point.x) || self.contains_x(rect.end_point.x)) &&
-            (self.contains_y(rect.start_point.y) || self.contains_y(rect.end_point.y))
+        // Use below if they intersect at all. Issue is we want to treat
+        //  a rect as just 4 lines.
+        (self.contains_x(rect.start_point.x) || self.contains_x(rect.end_point.x) ||
+            rect.contains_x(self.start_point.x)) &&
+        (self.contains_y(rect.start_point.y) || self.contains_y(rect.end_point.y) ||
+         rect.contains_y(self.start_point.y))
+        // rect.intersects_line(
+        //     &LineSegment::from(
+        //         self.start_point,
+        //         Point::from(self.end_point.x, self.start_point.y),
+        //     )
+        // )
+        // || rect.intersects_line(
+        //     &LineSegment::from(
+        //         Point::from(self.end_point.x, self.start_point.y),
+        //         self.end_point,
+        //     )
+        // )
+        // || rect.intersects_line(
+        //     &LineSegment::from(
+        //         self.end_point,
+        //         Point::from(self.start_point.x, self.end_point.y),
+        //     )
+        // )
+        // || rect.intersects_line(
+        //     &LineSegment::from(
+        //         Point::from(self.start_point.x, self.end_point.y),
+        //         self.start_point,
+        //     )
+        // )
     }
 
     fn bounding_box(&self) -> Rectangle {
         self.clone()
+    }
+}
+
+impl cnc_router::CNCPath for Rectangle {
+    fn to_path(
+        &self
+    ) -> Vec<cnc_router::OptionalCoordinate> {
+        vec![
+            cnc_router::OptionalCoordinate::from(
+                Some(self.start_point.x),
+                Some(self.end_point.y),
+                None,
+            ),
+            cnc_router::OptionalCoordinate::from(
+                Some(self.end_point.x),
+                Some(self.end_point.y),
+                None,
+            ),
+            cnc_router::OptionalCoordinate::from(
+                Some(self.end_point.x),
+                Some(self.start_point.y),
+                None,
+            ),
+            cnc_router::OptionalCoordinate::from(
+                Some(self.start_point.x),
+                Some(self.start_point.y),
+                None,
+            ),
+        ]
+    }
+
+    fn is_connected(&self) -> bool {
+        false
+    }
+
+    fn start_path(&self) -> cnc_router::Coordinate {
+        cnc_router::Coordinate::from(
+            self.start_point.x,
+            self.start_point.y,
+            0.0
+        )
     }
 }
 
@@ -512,9 +669,17 @@ impl RectangleConnections {
     }
 
     pub fn add_rect(&mut self, point: &lines_and_curves::Point) {
-        let x = self.convert_x(point.x);
-        let y = self.convert_y(point.y);
-        self.tiles[x][y] = true;
+        let min_x = self.convert_x(point.x);
+        let min_y = self.convert_y(point.y);
+        let max_x = self.convert_x(point.x + self.tile_width);
+        let max_y = self.convert_y(point.y + self.tile_height);
+
+        for x in min_x..max_x {
+            for y in min_y..max_y {
+                self.tiles[x][y] = true;
+                self.tiles[x][y] = true;
+            }
+        }
     }
 
     pub fn to_smaller_rect_iter(&mut self) -> &mut Self {
@@ -635,6 +800,9 @@ impl Intersection for AllIntersections {
             (AllIntersections::LineSegment(s1), AllIntersections::LineSegment(s2)) => {
                 Intersection::y(s1, &s2, x)
             }
+            (AllIntersections::SoftLineSegment(s1), AllIntersections::SoftLineSegment(s2)) => {
+                Intersection::y(s1, &s2, x)
+            }
             _ => {
                 panic!("Their are multiple types under AllIntersections in the same sign.shape");
             }
@@ -648,6 +816,9 @@ impl Intersection for AllIntersections {
             AllIntersections::LineSegment(s) => {
                 s.times_cross_line(line)
             }
+            AllIntersections::SoftLineSegment(s) => {
+                s.times_cross_line(line)
+            }
         }
     }
     fn intersects_rectangle(&self, rect : &Rectangle) -> bool {
@@ -657,6 +828,9 @@ impl Intersection for AllIntersections {
             }
             AllIntersections::LineSegment(s) => {
                 s.intersects_rectangle(&rect)
+            }
+            AllIntersections::SoftLineSegment(_) => {
+                false
             }
         }
     }
@@ -668,9 +842,77 @@ impl Intersection for AllIntersections {
             AllIntersections::LineSegment(s) => {
                 s.bounding_box()
             }
+            AllIntersections::SoftLineSegment(s) => {
+                s.bounding_box()
+            }
         }
     }
 }
+
+impl cnc_router::CNCPath for AllIntersections {
+    fn to_path(
+        &self
+    ) -> Vec<cnc_router::OptionalCoordinate> {
+        match &self {
+            AllIntersections::Rectangle(r) => {
+                r.to_path()
+            }
+            AllIntersections::LineSegment(s) => {
+                s.to_path()
+            }
+            AllIntersections::SoftLineSegment(_) => {
+                Vec::new()
+            }
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        match self {
+            AllIntersections::Rectangle(r) => {
+                r.is_connected()
+            }
+            AllIntersections::LineSegment(s) => {
+                s.is_connected()
+            }
+            AllIntersections::SoftLineSegment(_) => {
+                false
+            }
+        }
+    }
+
+    fn start_path(&self) -> cnc_router::Coordinate {
+        match self {
+            AllIntersections::Rectangle(r) => {
+                r.start_path()
+            }
+            AllIntersections::LineSegment(s) => {
+                s.start_path()
+            }
+            AllIntersections::SoftLineSegment(_) => {
+                cnc_router::Coordinate::from(0.0, 0.0, 9999.9)
+            }
+        }
+    }
+
+    fn follow_path<T: std::io::Write>(
+        &self,
+        mut cnc_router: &mut cnc_router::CNCRouter<T>,
+        feed_rate: Option<f64>,
+    ) {
+        match self {
+            AllIntersections::Rectangle(r) => {
+                r.follow_path(&mut cnc_router, feed_rate)
+            }
+            AllIntersections::LineSegment(s) => {
+                s.follow_path(&mut cnc_router, feed_rate)
+            }
+            AllIntersections::SoftLineSegment(_) => {
+            }
+        }
+    }
+}
+
+
 
 #[cfg(test)]
 mod test {
@@ -896,5 +1138,149 @@ mod test {
         assert_eq!(joined.start_point.y, 1.0);
         assert_eq!(joined.end_point.x,   6.0);
         assert_eq!(joined.end_point.y,   8.0);
+    }
+
+    #[test]
+    pub fn test_line_segment_intersection_y_up_down() {
+        let line = LineSegment::from(
+            Point::from(0.0, 0.0),
+            Point::from(1.0, 1.0),
+        );
+
+        let next = LineSegment::from(
+            Point::from(1.0, 1.0),
+            Point::from(2.0, 0.0),
+        );
+
+        assert_eq!(Intersection::y(&line, &next, -0.1), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 0.0), vec![0.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.1), vec![0.1]);
+        assert_eq!(Intersection::y(&line, &next, 0.5), vec![0.5]);
+        assert_eq!(Intersection::y(&line, &next, 0.9), vec![0.9]);
+        assert_eq!(Intersection::y(&line, &next, 1.0), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 1.1), vec![]);
+    }
+
+    #[test]
+    pub fn test_line_segment_intersection_y_down_up() {
+        let line = LineSegment::from(
+            Point::from(0.0, 1.0),
+            Point::from(1.0, 0.0),
+        );
+
+        let next = LineSegment::from(
+            Point::from(1.0, 0.0),
+            Point::from(2.0, 1.0),
+        );
+
+        assert_eq!(Intersection::y(&line, &next, -0.1), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 0.0), vec![1.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.1), vec![0.9]);
+        assert_eq!(Intersection::y(&line, &next, 0.5), vec![0.5]);
+        // assert_eq!(Intersection::y(&line, &next, 0.9), vec![0.1]);
+        assert_eq!(Intersection::y(&line, &next, 1.0), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 1.1), vec![]);
+    }
+
+    #[test]
+    pub fn test_line_segment_intersection_up_up() {
+        let line = LineSegment::from_ray(
+            Point::from(0.0, 0.0),
+            Point::from(1.0, 1.0),
+        );
+
+        let next = LineSegment::from_ray(
+            Point::from(1.0, 1.0),
+            Point::from(2.0, 2.0),
+        );
+
+        assert_eq!(Intersection::y(&line, &next, -0.1), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 0.0), vec![0.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.1), vec![0.1]);
+        assert_eq!(Intersection::y(&line, &next, 0.5), vec![0.5]);
+        assert_eq!(Intersection::y(&line, &next, 0.9), vec![0.9]);
+        assert_eq!(Intersection::y(&line, &next, 1.0), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 1.1), vec![]);
+    }
+
+    #[test]
+    pub fn test_line_segment_intersection_leftside() {
+        let line = LineSegment::from_ray(
+            Point::from(0.0, 0.0),
+            Point::from(1.0, 1.0),
+        );
+
+        let next = LineSegment::from_ray(
+            Point::from(1.0, 1.0),
+            Point::from(0.0, 2.0),
+        );
+
+        assert_eq!(Intersection::y(&line, &next, -0.1), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 0.0), vec![0.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.1), vec![0.1]);
+        assert_eq!(Intersection::y(&line, &next, 0.5), vec![0.5]);
+        assert_eq!(Intersection::y(&line, &next, 0.9), vec![0.9]);
+        assert_eq!(Intersection::y(&line, &next, 1.0), vec![1.0]);
+        assert_eq!(Intersection::y(&line, &next, 1.1), vec![]);
+    }
+
+    #[test]
+    pub fn test_line_segment_intersection_rightside() {
+        let line = LineSegment::from_ray(
+            Point::from(1.0, 1.0),
+            Point::from(0.0, 0.0),
+        );
+
+        let next = LineSegment::from_ray(
+            Point::from(0.0, 0.0),
+            Point::from(1.0, -1.0),
+        );
+
+        assert_eq!(Intersection::y(&line, &next, -0.1), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 0.0), vec![0.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.1), vec![0.1]);
+        assert_eq!(Intersection::y(&line, &next, 0.5), vec![0.5]);
+        assert_eq!(Intersection::y(&line, &next, 0.9), vec![0.9]);
+        assert_eq!(Intersection::y(&line, &next, 1.0), vec![1.0]);
+        assert_eq!(Intersection::y(&line, &next, 1.1), vec![]);
+    }
+
+
+    #[test]
+    pub fn test_line_segment_intersection_straight_up_right() {
+        let line = LineSegment::from(
+            Point::from(0.0, 0.0),
+            Point::from(0.0, 1.0),
+        );
+
+        let next = LineSegment::from(
+            Point::from(0.0, 1.0),
+            Point::from(2.0, 1.0),
+        );
+
+        assert_eq!(Intersection::y(&line, &next, -0.1), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 0.0), vec![0.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.1), vec![]);
+    }
+
+    #[test]
+    pub fn test_line_segment_intersection_left_up_90degrees() {
+        let line = LineSegment::from(
+            Point::from(1.0, 0.0),
+            Point::from(0.0, 0.0),
+        );
+
+        let next = LineSegment::from(
+            Point::from(0.0, 0.0),
+            Point::from(0.0, 1.0),
+        );
+
+        assert_eq!(Intersection::y(&line, &next, 1.1), vec![]);
+        assert_eq!(Intersection::y(&line, &next, 1.0), vec![0.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.9), vec![0.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.5), vec![0.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.1), vec![0.0]);
+        assert_eq!(Intersection::y(&line, &next, 0.0), vec![]);
+        assert_eq!(Intersection::y(&line, &next, -0.1), vec![]);
     }
 }
