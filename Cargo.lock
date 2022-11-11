@@ -3,5 +3,5 @@
 version = 3
 
 [[package]]
-name = "gcode_rust_library"
+name = "camcam"
 version = "0.1.0"

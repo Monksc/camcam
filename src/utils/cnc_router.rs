@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 use super::*;
 
+static ERROR_MSG_COULD_NOT_WRITE: &str = "Could not write in cnc_router.";
+
 fn format_float(x: f64) -> String {
     if x < 0.0 {
         format!("{:.5}", x)
@@ -240,11 +242,13 @@ impl <T: std::io::Write> CNCRouter<T> {
     }
 
     pub fn write_gcode_string(&mut self, str: String) {
-        self.gcode_write.write((str+"\n").as_bytes());
+        self.gcode_write.write((str+"\n").as_bytes())
+            .expect(ERROR_MSG_COULD_NOT_WRITE);
     }
 
     pub fn write_gcode_str(&mut self, line: &str) {
-        self.gcode_write.write((String::from(line)+&"\n").as_bytes());
+        self.gcode_write.write((String::from(line)+&"\n").as_bytes())
+            .expect(ERROR_MSG_COULD_NOT_WRITE);
     }
 
     pub fn write_gcode_command<W: std::fmt::Display>(&mut self, command: &str, line: W) {
@@ -260,13 +264,15 @@ impl <T: std::io::Write> CNCRouter<T> {
 
     pub fn write_gcode_comment(&mut self, str: String) {
         if self.verbose {
-            self.gcode_write.write((String::from("(") + &str + &")\n").as_bytes());
+            self.gcode_write.write((String::from("(") + &str + &")\n").as_bytes())
+                .expect(ERROR_MSG_COULD_NOT_WRITE);
         }
     }
 
     pub fn write_gcode_comment_str(&mut self, comment: &str) {
         if self.verbose {
-            self.gcode_write.write((String::from("(") + comment + &")\n").as_bytes());
+            self.gcode_write.write((String::from("(") + comment + &")\n").as_bytes())
+                .expect(ERROR_MSG_COULD_NOT_WRITE);
         }
     }
 
@@ -518,7 +524,8 @@ impl <T: std::io::Write> CNCRouter<T> {
         if self.verbose {
             self.write_gcode_str("(G09 makes the line exact stop)");
         }
-        self.gcode_write.write("G09 ".as_bytes());
+        self.gcode_write.write("G09 ".as_bytes())
+            .expect(ERROR_MSG_COULD_NOT_WRITE);
     }
 
     pub fn pull_out(&mut self, feed_rate: Option<f64>) {
