@@ -63,34 +63,36 @@ impl<T> Path<T> {
     }
 
     pub fn path_x_then_y(path_itr: &mut PathItr<T>) -> bool {
-        if !path_itr.is_down {
-            path_itr.is_down = true;
-            return true;
+        if path_itr.y % 2 == 0 {
+            if path_itr.x + 1 >= path_itr.path.width {
+                path_itr.y += 1;
+            } else {
+                path_itr.x += 1;
+            }
+        } else {
+            if path_itr.x == 0 {
+                path_itr.y += 1;
+            } else {
+                path_itr.x -= 1;
+            }
         }
-
-        path_itr.x += 1;
-        if path_itr.x >= path_itr.path.width {
-            path_itr.x = 0;
-            path_itr.y += 1;
-            path_itr.is_down = false;
-        }
-
         return path_itr.y < path_itr.path.height;
     }
 
     pub fn path_y_then_x(path_itr: &mut PathItr<T>) -> bool {
-        if !path_itr.is_down {
-            path_itr.is_down = true;
-            return true;
+        if path_itr.x % 2 == 0 {
+            if path_itr.y + 1 >= path_itr.path.height {
+                path_itr.x += 1;
+            } else {
+                path_itr.y += 1;
+            }
+        } else {
+            if path_itr.y == 0 {
+                path_itr.x += 1;
+            } else {
+                path_itr.y -= 1;
+            }
         }
-
-        path_itr.y += 1;
-        if path_itr.y >= path_itr.path.height {
-            path_itr.y = 0;
-            path_itr.x += 1;
-            path_itr.is_down = false;
-        }
-
         return path_itr.x < path_itr.path.width;
     }
 
