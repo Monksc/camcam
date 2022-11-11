@@ -1,0 +1,8 @@
+
+1) Goes down then up then switches bit then down then starts cutting.
+2) Tries to pick up less. Better path finding.
+3) Smaller bit doesn't need to be used as much. Only in small angles. Not where the larger bit did not fit.
+4) 1rst bit goes farther than second bit
+5) Turn on Blower
+6) Dont go so low at first
+7) Add in a way to cut braille

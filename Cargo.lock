@@ -3,5 +3,5 @@
 version = 3
 
 [[package]]
-name = "creategcode"
+name = "gcode_rust_library"
 version = "0.1.0"
