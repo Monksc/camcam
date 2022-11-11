@@ -40,24 +40,12 @@ impl <T: std::io::Write> GCodeCreator<T> {
             (z < self.z_axis_off_cut && self.depth_of_cut < 0.0)
     }
 
-    pub fn build_gcode_around_lines<J> (
-        &mut self,
-        feed_rate: f64,
-        path: &Vec<J>,
-        follow_path: &Box<impl Fn (&mut cnc_router::CNCRouter<T>, &J, f64)>,
-    ) {
-        for j in path {
-            follow_path(&mut self.cnc_router, &j, feed_rate);
-        }
-    }
-
-    pub fn build_gcode<J : lines_and_curves::Intersection + std::fmt::Debug + Clone> (
+    pub fn build_gcode<J : lines_and_curves::Intersection +
+        std::fmt::Debug + Clone + cnc_router::CNCPath> (
         &mut self,
         do_cut_on_odd: bool,
         next_path : fn (&mut bit_path::PathItr<f64>) -> bool,
         signs : &mut Vec<sign::Sign<J> >,
-        start_path: &Box<impl Fn (&J) -> lines_and_curves::Point >,
-        follow_path: &Box<impl Fn (&mut cnc_router::CNCRouter<T>, &J, f64)>,
     ) {
         let tools = self.cnc_router.get_tools().clone();
         for sign in &mut *signs {
@@ -75,7 +63,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         sign.bounding_rect().clone(),
                     ];
                 }
-                eprintln!("{} {}", seen_full_broad, cuttable_rects.len());
+                // eprintln!("{} {}", seen_full_broad, cuttable_rects.len());
                 if let cnc_router::ToolType::FullCutBroad = tool.tool_type {
                     seen_full_broad = true;
                 }
@@ -93,8 +81,8 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 for cut_rect in cuttable_rects {
                     let sign_width = cut_rect.width(); // sign.bounding_rect().width();
                     let sign_height = cut_rect.height(); // sign.bounding_rect().height();
-                    let width = (cut_rect.width() / bit_diameter) as usize;
-                    let height = (cut_rect.height() / bit_diameter) as usize;
+                    let width = (cut_rect.width() / (bit_diameter * tool.offset)) as usize;
+                    let height = (cut_rect.height() / (bit_diameter * tool.offset)) as usize;
                     let min_x = cut_rect.min_x();
                     let min_y = cut_rect.min_y();
 
@@ -139,13 +127,13 @@ impl <T: std::io::Write> GCodeCreator<T> {
                                     lines_and_curves::Point::from(x, y)
                                 ).contains_point_endless_line(p) {
                                     new_cuttable_rects.add_rect(&lines_and_curves::Point::from(p.x,p.y));
-                                    self.cnc_router.move_to_coordinate(
-                                        &cnc_router::Coordinate::from(
-                                            p.x, p.y, z_axis_off_cut + depth_of_cut,
+                                    self.cnc_router.move_to_optional_coordinate(
+                                        &cnc_router::OptionalCoordinate::from(
+                                            Some(p.x), Some(p.y), None,
                                         ),
-                                        tool.feed_rate_of_cut, false,
+                                        Some(tool.feed_rate_of_cut), false,
                                     );
-                                } 
+                                }
                             } else {
                                 assert!(!self.is_down(tool.length));
                                 // removing this as it adds in unnecessary fillers on paths
@@ -156,11 +144,11 @@ impl <T: std::io::Write> GCodeCreator<T> {
                                         x, y, z_axis_off_cut,
                                     ),
                                 );
-                                self.cnc_router.move_to_coordinate(
-                                    &cnc_router::Coordinate::from(
-                                        x, y, z_axis_off_cut + depth_of_cut,
+                                self.cnc_router.move_to_optional_coordinate(
+                                    &cnc_router::OptionalCoordinate::from_z(
+                                        Some(z_axis_off_cut + depth_of_cut),
                                     ),
-                                    tool.feed_rate_of_drill, false,
+                                    Some(tool.feed_rate_of_drill), false,
                                 );
                             }
 
@@ -168,17 +156,17 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         } else {
                             if let Some(p) = cut_to {
                                 assert!(self.is_down(tool.length));
-                                self.cnc_router.move_to_coordinate(
-                                    &cnc_router::Coordinate::from(
-                                        p.x, p.y, z_axis_off_cut + depth_of_cut,
+                                self.cnc_router.move_to_optional_coordinate(
+                                    &cnc_router::OptionalCoordinate::from(
+                                        Some(p.x), Some(p.y), None
                                     ),
-                                    tool.feed_rate_of_cut, false,
+                                    Some(tool.feed_rate_of_cut), false,
                                 );
-                                self.cnc_router.move_to_coordinate(
-                                    &cnc_router::Coordinate::from(
-                                        p.x, p.y, z_axis_off_cut,
+                                self.cnc_router.move_to_optional_coordinate(
+                                    &cnc_router::OptionalCoordinate::from_z(
+                                        Some(z_axis_off_cut),
                                     ),
-                                    tool.feed_rate_of_cut, false,
+                                    None, false,
                                 );
                             }
                             cut_to = None;
@@ -187,18 +175,19 @@ impl <T: std::io::Write> GCodeCreator<T> {
 
                     if self.is_down(tool.length) {
                         if let Some(p) = cut_to {
-                            self.cnc_router.move_to_coordinate(
-                                &cnc_router::Coordinate::from(
-                                p.x, p.y, z_axis_off_cut + depth_of_cut),
-                                tool.feed_rate_of_cut, false,
+                            self.cnc_router.move_to_optional_coordinate(
+                                &cnc_router::OptionalCoordinate::from(
+                                    Some(p.x), Some(p.y), None,
+                                ),
+                                Some(tool.feed_rate_of_cut), false,
                             );
                         }
                     }
-                    self.cnc_router.move_to_coordinate(
-                        &cnc_router::Coordinate::from(
-                            self.cnc_router.get_pos().x, self.cnc_router.get_pos().y, z_axis_off_cut
+                    self.cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(z_axis_off_cut)
                         ),
-                        tool.feed_rate_of_cut, false,
+                        Some(tool.feed_rate_of_cut), false,
                     );
                 }
 
@@ -220,18 +209,43 @@ impl <T: std::io::Write> GCodeCreator<T> {
             self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
             for sign in &mut *signs {
                 for shape in sign.shapes() {
-                    let point = start_path(&shape.lines()[0]);
-                    self.cnc_router.start_cutting_at(
-                        &cnc_router::Coordinate::from(
-                            point.x, point.y,
-                            z_axis_off_cut + self.depth_of_cut
-                        ),
-                        tool.feed_rate_of_drill, false
-                    );
-                    self.build_gcode_around_lines(
-                        tool.feed_rate_of_cut,
-                        shape.lines(), follow_path,
-                    );
+                    let mut first_line = true;
+                    for line in shape.lines() {
+                        if first_line || !line.is_connected() {
+                            first_line = false;
+                            let point = line.start_path();
+                            self.cnc_router.move_to_coordinate_rapid(
+                                &cnc_router::Coordinate::from(
+                                    point.x, point.y,
+                                    z_axis_off_cut
+                                ),
+                            );
+                            self.cnc_router.move_to_coordinate(
+                                &cnc_router::Coordinate::from(
+                                    point.x, point.y,
+                                    z_axis_off_cut + self.depth_of_cut,
+                                ),
+                                Some(tool.feed_rate_of_drill), false
+                            );
+                        }
+                        line.follow_path(&mut self.cnc_router, Some(tool.feed_rate_of_cut));
+                        if !line.is_connected() {
+                            self.cnc_router.move_to_optional_coordinate(
+                                &cnc_router::OptionalCoordinate::from_z(
+                                    Some(z_axis_off_cut)
+                                ),
+                                Some(tool.feed_rate_of_drill), false
+                            );
+                        }
+                    }
+                    if self.is_down(tool.length) {
+                        self.cnc_router.move_to_optional_coordinate(
+                            &cnc_router::OptionalCoordinate::from_z(
+                                Some(z_axis_off_cut)
+                            ),
+                            Some(tool.feed_rate_of_drill), false
+                        );
+                    }
                 }
             }
         }
