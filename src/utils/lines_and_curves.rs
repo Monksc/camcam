@@ -43,6 +43,109 @@ pub enum AllIntersections {
     Rectangle(Rectangle),
     SoftLineSegment(LineSegment),
     LineSegment(LineSegment),
+    Circle(Circle),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Circle {
+    pub center: Point,
+    pub radius: f64,
+}
+
+fn quadratic_formula(a: f64, b: f64, c: f64) -> Option<(f64, f64)> {
+    let inside_square = b*b - 4.0*a*c;
+
+    if inside_square < 0.0 {
+        return None;
+    }
+
+    let sqrt = inside_square.sqrt();
+
+    let plus = (-b + sqrt) / (2.0 * a);
+    let minus = (-b + sqrt) / (2.0 * a);
+
+    return Some((plus, minus));
+}
+
+fn multiply_matrix(l11: f64, l12: f64, l21: f64, l22: f64, a: f64, b:f64) -> (f64, f64) {
+    (
+        l11 * a + l12 * b,
+        l21 * a + l22 * b,
+    )
+}
+fn multiply_matrix_m(m: (f64, f64, f64, f64), x: f64, y: f64) -> (f64, f64) {
+    multiply_matrix(m.0, m.1, m.2, m.3, x, y)
+}
+
+impl Circle {
+    pub fn contains_x(&self, x: f64) -> bool {
+        self.center.x - self.radius <= x && self.center.x + self.radius >= x
+    }
+    pub fn distance_to_center(&self, line: &LineSegment) -> f64 {
+        // TODO: This function really needs to be speed up a bit.
+        // Maybe look up the best way how instead of trying to figure
+        //      out on your own.
+
+        // theta = atan(
+        //      [cos a2 (d(p2) / d(p1)) - cos a1 ] /
+        //      [sin a2 (d(p2) / d(p1)) - sin a1 ]
+        // )
+
+        let degrees = if line.p1 == Point::zero() && line.p2 == Point::zero() {
+            0.0
+        } else if line.p1 == Point::zero() {
+            let a = (line.p2.x / line.p2.distance_to(&Point::zero())).acos();
+            std::f64::consts::PI/2.0 - a
+        } else if line.p2 == Point::zero() {
+            let a = (line.p1.x / line.p1.distance_to(&Point::zero())).acos();
+            std::f64::consts::PI/2.0 - a
+        } else {
+            let a1 = (line.p1.x / line.p1.distance_to(&Point::zero())).acos();
+            let a2 = (line.p2.x / line.p2.distance_to(&Point::zero())).acos();
+
+            let p1d = line.p1.distance_to(&Point::zero());
+            let p2d = line.p2.distance_to(&Point::zero());
+
+            (
+                (a2.cos() * (p2d / p1d) - a1.cos()) /
+                (a2.sin() * (p2d / p1d) - a1.sin())
+            ).atan()
+        };
+
+
+        let l11 = degrees.cos();
+        let l12 = -degrees.sin();
+        let l21 = degrees.sin();
+        let l22 = degrees.cos();
+
+        let m = (l11, l12, l21, l22);
+        let p1 = multiply_matrix_m(m, line.p1.x, line.p1.y);
+        let p2 = multiply_matrix_m(m, line.p2.x, line.p2.y);
+        let c  = multiply_matrix_m(m, self.center.x, self.center.y);
+
+        // println!("P1: ({}, {})", p1.0, p1.1);
+        // println!("P2: ({}, {})", p2.0, p2.1);
+        // println!("C : ({}, {})", c.0, c.1);
+        if p1.1 > c.1 && p2.1 > c.1 {
+            let c = Point::from(c.0, c.1);
+            return if p1.1 > p2.1 {
+                Point::from(p2.0, p2.1).distance_to(&c)
+            } else {
+                Point::from(p1.0, p1.1).distance_to(&c)
+            };
+        }
+
+        if p1.1 < c.1 && p2.1 < c.1 {
+            let c = Point::from(c.0, c.1);
+            return if p1.1 < p2.1 {
+                Point::from(p2.0, p2.1).distance_to(&c)
+            } else {
+                Point::from(p1.0, p1.1).distance_to(&c)
+            };
+        }
+
+        (p1.0 - c.0).abs()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -143,6 +246,15 @@ impl Rectangle {
         )
     }
 
+    pub fn to_points(&self) -> Vec<Point> {
+        vec![
+            self.start_point,
+            Point::from(self.end_point.x, self.start_point.y),
+            self.end_point,
+            Point::from(self.start_point.x, self.end_point.y),
+        ]
+    }
+
     pub fn to_lines(&self) -> Vec<LineSegment> {
         vec![
             LineSegment::from(
@@ -211,6 +323,11 @@ impl Point {
             x: x,
             y: y,
         }
+    }
+    pub fn distance_to(&self, p: &Point) -> f64 {
+        let difx = self.x - p.x;
+        let dify = self.y - p.y;
+        return (difx*difx + dify*dify).sqrt();
     }
 }
 
@@ -499,12 +616,12 @@ impl cnc_router::CNCPath for LineSegment {
         true
     }
 
-    fn start_path(&self) -> cnc_router::Coordinate {
-        cnc_router::Coordinate::from(
+    fn start_path(&self) -> Option<cnc_router::Coordinate> {
+        Some(cnc_router::Coordinate::from(
             self.p1.x,
             self.p1.y,
             0.0
-        )
+        ))
     }
 }
 
@@ -617,11 +734,106 @@ impl cnc_router::CNCPath for Rectangle {
         false
     }
 
-    fn start_path(&self) -> cnc_router::Coordinate {
-        cnc_router::Coordinate::from(
+    fn start_path(&self) -> Option<cnc_router::Coordinate> {
+        Some(cnc_router::Coordinate::from(
             self.start_point.x,
             self.start_point.y,
             0.0
+        ))
+    }
+}
+
+impl Intersection for Circle {
+    fn y(&self, _next: &Self, x: f64) -> Vec<f64> {
+        // X^2 + Y^2 = r^2
+        // Y^2 = r^2 - X^2
+        // Y += sqrt(r^2 - X^2)
+        if self.contains_x(x) {
+            let difx = x - self.center.x;
+            let positive_value = (self.radius * self.radius - difx * difx).sqrt();
+            vec![
+                self.center.y + positive_value,
+                self.center.y - positive_value,
+            ]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn times_cross_line(&self, line: &LineSegment) -> usize {
+        if self.distance_to_center(&line) <= self.radius {
+            if self.center.distance_to(&line.p1) <= self.radius &&
+                self.center.distance_to(&line.p2) < self.radius {
+                0
+            }
+            else if
+                (self.center.distance_to(&line.p1) <= self.radius &&
+                 self.center.distance_to(&line.p2) > self.radius) ||
+                (self.center.distance_to(&line.p1) >= self.radius &&
+                 self.center.distance_to(&line.p2) < self.radius)
+            {
+                1
+            } else {
+                2
+            }
+        } else {
+            0
+        }
+    }
+
+    fn intersects_rectangle(&self, rect : &Rectangle) -> bool {
+        for line in &rect.to_lines() {
+            if self.times_cross_line(&line) > 0 {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn bounding_box(&self) -> Rectangle {
+        Rectangle::from(
+            Point::from(
+                self.center.x - self.radius,
+                self.center.y - self.radius,
+            ),
+            Point::from(
+                self.center.x + self.radius,
+                self.center.y + self.radius,
+            ),
+        )
+    }
+}
+
+impl cnc_router::CNCPath for Circle {
+    fn to_path(
+        &self
+    ) -> Vec<cnc_router::OptionalCoordinate> {
+        Vec::new()
+    }
+
+    fn is_connected(&self) -> bool {
+        false
+    }
+
+    fn start_path(&self) -> Option<cnc_router::Coordinate> {
+        Some(cnc_router::Coordinate::from(
+            self.center.x - self.radius,
+            self.center.y,
+            9.0,
+        ))
+    }
+
+    fn follow_path<T: std::io::Write>(
+        &self,
+        cnc_router: &mut cnc_router::CNCRouter<T>,
+        feed_rate: Option<f64>,
+    ) {
+        cnc_router.circular_interpolation_around_change_midpoint(
+            true,
+            feed_rate,
+            self.radius,
+            0.0,
         )
     }
 }
@@ -671,8 +883,16 @@ impl RectangleConnections {
     pub fn add_rect(&mut self, point: &lines_and_curves::Point) {
         let min_x = self.convert_x(point.x);
         let min_y = self.convert_y(point.y);
-        let max_x = self.convert_x(point.x + self.tile_width);
-        let max_y = self.convert_y(point.y + self.tile_height);
+        let mut max_x = self.convert_x(point.x + self.tile_width);
+        let mut max_y = self.convert_y(point.y + self.tile_height);
+
+        // Rarely does it go over this amount
+        if max_x >= self.tiles.len() {
+            max_x = self.tiles.len();
+        }
+        if max_y >= self.tiles[max_x].len() {
+            max_y = self.tiles[max_x].len();
+        }
 
         for x in min_x..max_x {
             for y in min_y..max_y {
@@ -803,6 +1023,9 @@ impl Intersection for AllIntersections {
             (AllIntersections::SoftLineSegment(s1), AllIntersections::SoftLineSegment(s2)) => {
                 Intersection::y(s1, &s2, x)
             }
+            (AllIntersections::Circle(c1), AllIntersections::Circle(c2)) => {
+                Intersection::y(c1, &c2, x)
+            }
             _ => {
                 panic!("Their are multiple types under AllIntersections in the same sign.shape");
             }
@@ -819,6 +1042,9 @@ impl Intersection for AllIntersections {
             AllIntersections::SoftLineSegment(s) => {
                 s.times_cross_line(line)
             }
+            AllIntersections::Circle(c) => {
+                c.times_cross_line(line)
+            }
         }
     }
     fn intersects_rectangle(&self, rect : &Rectangle) -> bool {
@@ -832,6 +1058,9 @@ impl Intersection for AllIntersections {
             AllIntersections::SoftLineSegment(_) => {
                 false
             }
+            AllIntersections::Circle(c) => {
+                c.intersects_rectangle(&rect)
+            }
         }
     }
     fn bounding_box(&self) -> Rectangle {
@@ -844,6 +1073,9 @@ impl Intersection for AllIntersections {
             }
             AllIntersections::SoftLineSegment(s) => {
                 s.bounding_box()
+            }
+            AllIntersections::Circle(c) => {
+                c.bounding_box()
             }
         }
     }
@@ -863,6 +1095,9 @@ impl cnc_router::CNCPath for AllIntersections {
             AllIntersections::SoftLineSegment(_) => {
                 Vec::new()
             }
+            AllIntersections::Circle(c) => {
+                c.to_path()
+            }
         }
     }
 
@@ -877,10 +1112,13 @@ impl cnc_router::CNCPath for AllIntersections {
             AllIntersections::SoftLineSegment(_) => {
                 false
             }
+            AllIntersections::Circle(c) => {
+                c.is_connected()
+            }
         }
     }
 
-    fn start_path(&self) -> cnc_router::Coordinate {
+    fn start_path(&self) -> Option<cnc_router::Coordinate> {
         match self {
             AllIntersections::Rectangle(r) => {
                 r.start_path()
@@ -889,7 +1127,10 @@ impl cnc_router::CNCPath for AllIntersections {
                 s.start_path()
             }
             AllIntersections::SoftLineSegment(_) => {
-                cnc_router::Coordinate::from(0.0, 0.0, 9999.9)
+                None
+            }
+            AllIntersections::Circle(c) => {
+                c.start_path()
             }
         }
     }
@@ -908,15 +1149,29 @@ impl cnc_router::CNCPath for AllIntersections {
             }
             AllIntersections::SoftLineSegment(_) => {
             }
+            AllIntersections::Circle(c) => {
+                c.follow_path(&mut cnc_router, feed_rate)
+            }
         }
     }
 }
 
 
-
 #[cfg(test)]
 mod test {
     use super::*;
+
+    pub fn test_float(l: f64, r: f64) -> bool {
+        if (l.is_nan() || r.is_nan()) && l != r {
+            println!("L: {}, R: {}", l, r);
+            return false;
+        }
+        if (l-r).abs() >= 0.00000000000001 {
+            println!("L: {}, R: {}", l, r);
+            return false;
+        }
+        return true;
+    }
 
     #[test]
     pub fn test_line_contains_xy() {
@@ -1282,5 +1537,83 @@ mod test {
         assert_eq!(Intersection::y(&line, &next, 0.1), vec![0.0]);
         assert_eq!(Intersection::y(&line, &next, 0.0), vec![]);
         assert_eq!(Intersection::y(&line, &next, -0.1), vec![]);
+    }
+
+    #[test]
+    pub fn test_circle_distance_center1() {
+        let circle = Circle {
+            center: Point::from(0.0, 0.0),
+            radius: 1.0,
+        };
+
+        let line1 = LineSegment::from(
+            Point::from(-1.0, 1.0),
+            Point::from(1.0, 1.0),
+        );
+
+        let line2 = LineSegment::from(
+            Point::from(1.0, 2.0),
+            Point::from(1.0, 1.0),
+        );
+
+        let line3 = LineSegment::from(
+            Point::from(1.0, -2.0),
+            Point::from(1.0, -1.0),
+        );
+
+        assert!(test_float(circle.distance_to_center(&line1), 1.0));
+        assert!(test_float(circle.distance_to_center(&line2), 2.0_f64.sqrt()));
+        assert!(test_float(circle.distance_to_center(&line3), 2.0_f64.sqrt()));
+    }
+
+    #[test]
+    pub fn test_circle_distance_center2() {
+        let circle = Circle {
+            center: Point::from(5.0, 5.0),
+            radius: 1.0,
+        };
+
+        let line1 = LineSegment::from(
+            Point::from(4.0, 6.0),
+            Point::from(6.0, 6.0),
+        );
+
+        let line2 = LineSegment::from(
+            Point::from(6.0, 8.0),
+            Point::from(6.0, 6.0),
+        );
+
+        let line3 = LineSegment::from(
+            Point::from(6.0, 4.0),
+            Point::from(6.0, 0.0),
+        );
+
+        let line4 = LineSegment::from(
+            Point::from(0.0, 0.0),
+            Point::from(0.0, 0.0),
+        );
+
+        let line5 = LineSegment::from(
+            Point::from(0.0, 0.0),
+            Point::from(5.0, 5.0),
+        );
+
+        let line6 = LineSegment::from(
+            Point::from(0.0, 0.0),
+            Point::from(9.0, 9.0),
+        );
+
+        let line7 = LineSegment::from(
+            Point::from(-1.0, 0.0),
+            Point::from(-4.0, 1.0),
+        );
+
+        assert!(test_float(circle.distance_to_center(&line1), 1.0));
+        assert!(test_float(circle.distance_to_center(&line2), 2.0_f64.sqrt()));
+        assert!(test_float(circle.distance_to_center(&line3), 2.0_f64.sqrt()));
+        assert!(test_float(circle.distance_to_center(&line4), 50.0_f64.sqrt()));
+        assert!(test_float(circle.distance_to_center(&line5), 0.0));
+        assert!(test_float(circle.distance_to_center(&line6), 0.0));
+        assert!(test_float(circle.distance_to_center(&line7), (25.0 + 36.0 as f64).sqrt()));
     }
 }

@@ -49,6 +49,14 @@ impl ToolType {
             ToolType::Braille => String::from("Braille"),
         }
     }
+    pub fn raw_value(&self) -> u32 {
+        match self {
+            ToolType::PartialCutBroad => 0,
+            ToolType::FullCutBroad => 1,
+            ToolType::Text => 2,
+            ToolType::Braille => 3,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -691,7 +699,8 @@ impl <T: std::io::Write> CNCRouter<T> {
                 self.format_float(offset.y)
             )
         );
-        self.pos = *end_pos;
+        self.pos.x = end_pos.x;
+        self.pos.y = end_pos.y;
     }
 
     pub fn circular_interpolation_exact_midpoint(&mut self,
@@ -719,6 +728,40 @@ impl <T: std::io::Write> CNCRouter<T> {
             &og_pos, center_pos
         );
     }
+
+    pub fn circular_interpolation_around_change_midpoint(
+        &mut self,
+        is_clock_wise: bool,
+        feed_rate: Option<f64>,
+        dx: f64,
+        dy: f64
+    ) {
+        let verbose = self.verbose_str(
+            " (Draw a circle with center point of current position + I, J)"
+        );
+        let feed_rate_msg = if let Some(f) = feed_rate {
+            if f == self.feed_rate {
+                String::new()
+            } else {
+                self.feed_rate = f;
+                format!("F{} ", f)
+            }
+        } else {
+            String::new()
+        };
+
+        self.write_gcode_command(
+            if is_clock_wise { "G02" } else { "G03" },
+            format!(
+                "{}I{} J{}{}", 
+                feed_rate_msg,
+                dx,
+                dy,
+                verbose
+            )
+        );
+    }
+
 
     pub fn circular_interpolation_exact_midpoint_with_radius(
         &mut self,
@@ -1186,6 +1229,14 @@ impl Tool {
             false
         }
     }
+
+    pub fn is_braille(&self) -> bool {
+        if let ToolType::Braille = self.tool_type {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Coordinate {
@@ -1482,7 +1533,7 @@ pub trait CNCPath {
 
     fn is_connected(&self) -> bool;
 
-    fn start_path(&self) -> Coordinate;
+    fn start_path(&self) -> Option<Coordinate>;
 
     fn follow_path<T: std::io::Write>(
         &self,

@@ -10,6 +10,7 @@ pub struct Sign<T : lines_and_curves::Intersection + Clone> {
 
 pub struct Shape<T: lines_and_curves::Intersection> {
     lines: Vec<T>,
+    tool_type: cnc_router::ToolType,
     layers: std::collections::HashMap
         <usize, Vec<(f64, Vec<f64>)>>, // [x_index][x] = [y]
 }
@@ -78,12 +79,18 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
 
 impl<T: lines_and_curves::Intersection> Shape<T> {
     pub fn from(
+        tool_type: cnc_router::ToolType,
         lines: Vec<T>,
     ) -> Self {
         Self {
             lines: lines,
             layers: std::collections::HashMap::new(),
+            tool_type: tool_type,
         }
+    }
+
+    pub fn tool_type(&self) -> cnc_router::ToolType {
+        self.tool_type
     }
 
     pub fn bounding_box(&self) -> Option<lines_and_curves::Rectangle> {
@@ -292,6 +299,7 @@ impl<T: lines_and_curves::Intersection + Clone> SplitOrLines<T> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::{cnc_router};
 
     #[test]
     pub fn test_times_cross_line_and_rect() {
@@ -303,6 +311,7 @@ mod test {
             ),
             vec![
                 sign::Shape::from(
+                    cnc_router::ToolType::Text,
                     lines_and_curves::LineSegment::create_path(&vec![
                         lines_and_curves::Point::from(17.5, 15.0),
                         lines_and_curves::Point::from(20.0, 17.5),

@@ -167,6 +167,7 @@ fn main() {
                 ),
                 vec![
                     sign::Shape::from(
+                        cnc_router::ToolType::Text,
                         lines_and_curves::LineSegment::create_path(&vec![
                             lines_and_curves::Point::from(4.0, 2.0), // Top
                             lines_and_curves::Point::from(6.0, 4.0), // Right
@@ -178,6 +179,7 @@ fn main() {
                         .collect(),
                     ),
                     sign::Shape::from(
+                        cnc_router::ToolType::Text,
                         lines_and_curves::Rectangle::from(
                             lines_and_curves::Point::from(2.0, 2.0),
                             lines_and_curves::Point::from(6.0, 6.0),
