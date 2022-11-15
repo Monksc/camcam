@@ -201,35 +201,51 @@ impl <T: std::io::Write> GCodeCreator<T> {
         }
 
         self.cnc_router.write_gcode_comment_str("Following Shapes");
-        for (tool_index, tool) in tools.iter().enumerate() {
-            if !tool.is_text() {
-                continue
-            }
-            let z_axis_off_cut = self.z_axis_off_cut + tool.length; 
-            self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
-            for sign in &mut *signs {
-                for shape in sign.shapes() {
-                    let mut first_line = true;
-                    for line in shape.lines() {
-                        if first_line || !line.is_connected() {
-                            first_line = false;
-                            let point = line.start_path();
-                            self.cnc_router.move_to_coordinate_rapid(
-                                &cnc_router::Coordinate::from(
-                                    point.x, point.y,
-                                    z_axis_off_cut
-                                ),
-                            );
-                            self.cnc_router.move_to_coordinate(
-                                &cnc_router::Coordinate::from(
-                                    point.x, point.y,
-                                    z_axis_off_cut + self.depth_of_cut,
-                                ),
-                                Some(tool.feed_rate_of_drill), false
-                            );
+        for tool_type in vec![cnc_router::ToolType::Text, cnc_router::ToolType::Braille] {
+            for (tool_index, tool) in tools.iter().enumerate() {
+                if tool_type.raw_value() != tool.tool_type.raw_value() {
+                    continue;
+                }
+
+                let z_axis_off_cut = self.z_axis_off_cut + tool.length; 
+                self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
+                for sign in &mut *signs {
+                    for shape in sign.shapes() {
+                        if shape.tool_type().raw_value() != tool.tool_type.raw_value() {
+                            continue;
                         }
-                        line.follow_path(&mut self.cnc_router, Some(tool.feed_rate_of_cut));
-                        if !line.is_connected() {
+                        let mut first_line = true;
+                        for line in shape.lines() {
+                            if first_line || !line.is_connected() {
+                                first_line = false;
+                                let Some(point) = line.start_path() else {
+                                    continue;
+                                };
+                                self.cnc_router.move_to_coordinate_rapid(
+                                    &cnc_router::Coordinate::from(
+                                        point.x, point.y,
+                                        z_axis_off_cut
+                                    ),
+                                );
+                                self.cnc_router.move_to_coordinate(
+                                    &cnc_router::Coordinate::from(
+                                        point.x, point.y,
+                                        z_axis_off_cut + self.depth_of_cut,
+                                    ),
+                                    Some(tool.feed_rate_of_drill), false
+                                );
+                            }
+                            line.follow_path(&mut self.cnc_router, Some(tool.feed_rate_of_cut));
+                            if !line.is_connected() {
+                                self.cnc_router.move_to_optional_coordinate(
+                                    &cnc_router::OptionalCoordinate::from_z(
+                                        Some(z_axis_off_cut)
+                                    ),
+                                    Some(tool.feed_rate_of_drill), false
+                                );
+                            }
+                        }
+                        if self.is_down(tool.length) {
                             self.cnc_router.move_to_optional_coordinate(
                                 &cnc_router::OptionalCoordinate::from_z(
                                     Some(z_axis_off_cut)
@@ -238,18 +254,9 @@ impl <T: std::io::Write> GCodeCreator<T> {
                             );
                         }
                     }
-                    if self.is_down(tool.length) {
-                        self.cnc_router.move_to_optional_coordinate(
-                            &cnc_router::OptionalCoordinate::from_z(
-                                Some(z_axis_off_cut)
-                            ),
-                            Some(tool.feed_rate_of_drill), false
-                        );
-                    }
                 }
             }
         }
-
 
         self.cnc_router.go_home();
         self.cnc_router.set_spindle_off();
