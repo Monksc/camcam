@@ -886,12 +886,16 @@ impl RectangleConnections {
         let mut max_x = self.convert_x(point.x + self.tile_width);
         let mut max_y = self.convert_y(point.y + self.tile_height);
 
+        if self.tiles.len() == 0 || self.tiles[0].len() == 0 {
+            return;
+        }
+
         // Rarely does it go over this amount
         if max_x >= self.tiles.len() {
             max_x = self.tiles.len();
         }
-        if max_y >= self.tiles[max_x].len() {
-            max_y = self.tiles[max_x].len();
+        if max_y >= self.tiles[0].len() {
+            max_y = self.tiles[0].len();
         }
 
         for x in min_x..max_x {
