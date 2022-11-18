@@ -181,6 +181,7 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.turn_on_exact_stop_mode();
         self.write_gcode_command("G54", self.verbose_str(" (Change 0 coordinate)"));
         self.go_home();
+        self.turn_fan(true);
     }
 
     pub fn get_pos(&self) -> Coordinate {
@@ -312,6 +313,7 @@ impl <T: std::io::Write> CNCRouter<T> {
 
     pub fn reset_program_and_end(&mut self) {
         self.set_spindle_off();
+        self.turn_fan(false);
         self.go_home();
         // self.program_stop();
         // self.end_program();
@@ -1095,6 +1097,27 @@ impl <T: std::io::Write> CNCRouter<T> {
                 self.format_float(l),
                 self.verbose_str(" (Drilling cycle.)")
             )
+        )
+    }
+
+    pub fn turn_fan(&mut self, is_on: bool) {
+        let verbose = self.verbose_string(
+            format!(
+                " (Turn {} fan.)",
+                if is_on {
+                    "on"
+                } else {
+                    "off"
+                }
+            )
+        );
+        self.write_gcode_command(
+            if is_on {
+                "M83"
+            } else {
+                "M84"
+            },
+            verbose,
         )
     }
 

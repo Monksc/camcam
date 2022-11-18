@@ -209,6 +209,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
 
                 let z_axis_off_cut = self.z_axis_off_cut + tool.length; 
                 self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
+                self.cnc_router.set_spindle_on(false, self.spindle_speed);
                 for sign in &mut *signs {
                     for shape in sign.shapes() {
                         if shape.tool_type().raw_value() != tool.tool_type.raw_value() {
@@ -255,6 +256,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         }
                     }
                 }
+                self.cnc_router.set_spindle_off();
             }
         }
 
