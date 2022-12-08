@@ -2,12 +2,14 @@
 use super::*;
 
 
+#[derive(Debug, Clone)]
 pub struct Sign<T : lines_and_curves::Intersection + Clone> {
     bounding_rect: lines_and_curves::Rectangle,
     shapes: Vec<Shape<T>>,
     contains_rect: ContainsRectangle<T>
 }
 
+#[derive(Debug, Clone)]
 pub struct Shape<T: lines_and_curves::Intersection> {
     lines: Vec<T>,
     tool_type: cnc_router::ToolType,
@@ -15,11 +17,13 @@ pub struct Shape<T: lines_and_curves::Intersection> {
         <usize, Vec<(f64, Vec<f64>)>>, // [x_index][x] = [y]
 }
 
+#[derive(Debug, Clone)]
 struct ContainsRectangle<T: lines_and_curves::Intersection + Clone> {
     bounding_rect: lines_and_curves::Rectangle,
     split: Box<SplitOrLines<T>>,
 }
 
+#[derive(Debug, Clone)]
 enum SplitOrLines<T: lines_and_curves::Intersection + Clone> {
     Split(Vec<ContainsRectangle<T>>),
     Lines(Vec<T>)
@@ -70,6 +74,48 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         }
 
         return seen;
+    }
+
+    pub fn get_next_y_value(&mut self, x: f64, y: f64) -> f64 {
+        let mut min_y = None;
+        for shape in &mut self.shapes {
+            match (shape.get_next_y_value(x, y), min_y) {
+                (Some(y), None) => min_y = Some(y),
+                (Some(y), Some(old_min_y)) => if y < old_min_y {
+                    min_y = Some(y)
+                },
+                (_, _) => {
+
+                }
+            }
+        }
+
+        if let Some(y) = min_y {
+            y
+        } else {
+            self.bounding_rect.max_y()
+        }
+    }
+
+    pub fn get_prev_y_value(&mut self, x: f64, y: f64) -> f64 {
+        let mut max_y = None;
+        for shape in &mut self.shapes {
+            match (shape.get_prev_y_value(x, y), max_y) {
+                (Some(y), None) => max_y = Some(y),
+                (Some(y), Some(old_max_y)) => if y > old_max_y {
+                    max_y = Some(y)
+                },
+                (_, _) => {
+
+                }
+            }
+        }
+
+        if let Some(y) = max_y {
+            y
+        } else {
+            self.bounding_rect.min_y()
+        }
     }
 
     pub fn line_collides_wth_rect(&mut self, rectangle: &lines_and_curves::Rectangle) -> bool {
@@ -156,34 +202,49 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
         return seen;
     }
 
-    /*
-    pub fn line_collides_wth_rect(&mut self, rectangle: &lines_and_curves::Rectangle) -> bool {
-        let min_y = rectangle.min_y();
-        let max_y = rectangle.max_y();
-        let min_x = rectangle.min_x();
-        let max_x = rectangle.max_x();
-        for x_index in
-            (f64_to_usize_block(min_x) - 1) ..=
-                (f64_to_usize_block(max_x)+1) {
+    pub fn get_next_y_value(&mut self, x: f64, y: f64) -> Option<f64> {
+        self.add_x_layer(x);
 
-            if !self.layers.contains_key(&x_index) {
-                continue;
-            }
-            for (x, y_values) in &self.layers[&x_index] {
-                if *x < min_x || *x > max_x {
-                    continue;
+        let mut min_y = None;
+
+        for y_values in self.get_y_values(x) {
+            let y_index = algorithms::seen_before_or_equal(y_values, y);
+            if y_index >= y_values.len() { continue }
+            let y_value = y_values[y_index];
+
+            if let Some(some_min_y) = min_y {
+                if some_min_y < y_value {
+                    min_y = Some(y_value);
                 }
-                let y_min_index = algorithms::seen_before(y_values, min_y);
-                let y_max_index = algorithms::seen_before(y_values, max_y);
-                if y_min_index != y_max_index {
-                    return true;
-                }
+            } else {
+                min_y = Some(y_value);
             }
         }
 
-        return false;
+        return min_y;
     }
-    */
+
+    pub fn get_prev_y_value(&mut self, x: f64, y: f64) -> Option<f64> {
+        self.add_x_layer(x);
+
+        let mut max_y = None;
+
+        for y_values in self.get_y_values(x) {
+            let y_index = algorithms::seen_before_or_equal(y_values, y);
+            if y_index == 0 { continue }
+            let y_value = y_values[y_index-1];
+
+            if let Some(some_max_y) = max_y {
+                if some_max_y > y_value {
+                    max_y = Some(y_value);
+                }
+            } else {
+                max_y = Some(y_value);
+            }
+        }
+
+        return max_y;
+    }
 }
 
 impl<T: lines_and_curves::Intersection + Clone> ContainsRectangle<T> {

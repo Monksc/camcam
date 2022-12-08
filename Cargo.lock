@@ -3,5 +3,22 @@
 version = 3
 
 [[package]]
+name = "algorithms"
+version = "0.1.0"
+source = "git+https://github.com/Monksc/algorithms_rust_lib?rev=c150912#c150912ce644d672cbf783a00e0e367653d2ea5f"
+
+[[package]]
 name = "camcam"
 version = "0.1.0"
+dependencies = [
+ "algorithms",
+ "range_map",
+]
+
+[[package]]
+name = "range_map"
+version = "0.1.0"
+source = "git+https://github.com/Monksc/range_map?rev=cebc2da#cebc2daa723360a032ac3576dcab4eafb1025a85"
+dependencies = [
+ "algorithms",
+]

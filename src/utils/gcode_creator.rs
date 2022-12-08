@@ -265,6 +265,211 @@ impl <T: std::io::Write> GCodeCreator<T> {
         self.cnc_router.reset_program_and_end();
     }
 
+    pub fn cut_broad_rect<J : lines_and_curves::Intersection +
+        std::fmt::Debug + Clone + cnc_router::CNCPath> (
+        &mut self,
+        do_cut_on_odd: bool,
+        sign : &mut sign::Sign<J>,
+        tool: &cnc_router::Tool,
+        rect: &lines_and_curves::Rectangle,
+        range_map: &mut range_map::FillRect,
+    ) -> bool {
+        let mut did_update = false;
+        let z_axis_off_cut = self.z_axis_off_cut + tool.length; 
+
+        let increment = 2.0 * tool.radius * tool.offset;
+        let mut first_time = true;
+        let mut is_going_up = true;
+        for x in float_loop(
+            rect.min_x() + tool.radius,
+            rect.max_x() - tool.radius,
+            increment,
+        ) {
+            if first_time {
+                println!("(RAPID)");
+                let mut y = rect.min_y() + tool.radius;
+                if (sign.y_values_before(x, y) % 2 == 0)
+                    == do_cut_on_odd {
+
+                    let mut assigned_y = false;
+                    for i in 0..5 {
+                        let (new_y, new_is_going_up) = match i {
+                            1 => (sign.get_next_y_value(x, rect.min_y()) + tool.radius, true),
+                            2 => (sign.get_next_y_value(x, rect.min_y()) - tool.radius, false),
+                            3 => (sign.get_prev_y_value(x, rect.min_y()) + tool.radius, true),
+                            4 => (sign.get_prev_y_value(x, rect.min_y()) - tool.radius, false),
+                            5 => (sign.get_next_y_value(x, rect.max_y()) + tool.radius, true),
+                            6 => (sign.get_next_y_value(x, rect.max_y()) - tool.radius, false),
+                            7 => (sign.get_prev_y_value(x, rect.max_y()) + tool.radius, true),
+                            8 => (sign.get_prev_y_value(x, rect.max_y()) - tool.radius, false),
+                            _ => (y, is_going_up),
+                        };
+                        if (sign.y_values_before(x, y) % 2 == 0)
+                            != do_cut_on_odd {
+                            y = new_y;
+                            is_going_up = new_is_going_up;
+                            assigned_y = true;
+                            break;
+                        }
+                    }
+
+                    if !assigned_y {
+                        return did_update;
+                    }
+                }
+                self.cnc_router.move_to_coordinate_rapid(
+                    &cnc_router::Coordinate::from(
+                        x, y, z_axis_off_cut,
+                    ),
+                );
+                self.cnc_router.move_to_optional_coordinate(
+                    &cnc_router::OptionalCoordinate::from_z(
+                        Some(z_axis_off_cut + self.depth_of_cut)
+                    ),
+                    Some(tool.feed_rate_of_drill), false
+                );
+                first_time = false;
+            }
+            else {
+                // follow path tool.radius to left/right
+                if (sign.y_values_before(x, self.cnc_router.get_pos().y) % 2 == 0)
+                    == do_cut_on_odd {
+                    println!("(UP)");
+                    self.cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(z_axis_off_cut)
+                        ),
+                        Some(tool.feed_rate_of_cut), false,
+                    );
+                    return did_update;
+                }
+                self.cnc_router.move_to_optional_coordinate(
+                    &cnc_router::OptionalCoordinate::from_x(
+                        Some(x)
+                    ),
+                    Some(tool.feed_rate_of_cut), false
+                );
+            }
+
+            let mut y = if is_going_up {
+                sign.get_next_y_value(x, self.cnc_router.get_pos().y) - tool.radius
+            } else {
+                sign.get_prev_y_value(x, self.cnc_router.get_pos().y) + tool.radius
+            };
+            if y < rect.min_y() {
+                y = rect.min_y() + tool.radius;
+            }
+            else if y > rect.max_y() {
+                y = rect.max_y() - tool.radius;
+            }
+
+            range_map.fill_rect(x-tool.radius, self.cnc_router.get_pos().y, x+tool.radius, y);
+            did_update = true;
+
+            if (sign.y_values_before(x, y) % 2 == 0)
+                == do_cut_on_odd {
+                println!("(UP)");
+                self.cnc_router.move_to_optional_coordinate(
+                    &cnc_router::OptionalCoordinate::from_z(
+                        Some(z_axis_off_cut)
+                    ),
+                    Some(tool.feed_rate_of_cut), false,
+                );
+                return did_update;
+            }
+            self.cnc_router.move_to_optional_coordinate(
+                &cnc_router::OptionalCoordinate::from_y(
+                    Some(y)
+                ),
+                Some(tool.feed_rate_of_cut), false,
+            );
+
+
+            is_going_up = !is_going_up;
+        }
+
+        println!("(UP)");
+        self.cnc_router.move_to_optional_coordinate(
+            &cnc_router::OptionalCoordinate::from_z(
+                Some(z_axis_off_cut)
+            ),
+            Some(tool.feed_rate_of_cut), false,
+        );
+
+        return did_update;
+    }
+
+    pub fn broad_smart_path<J : lines_and_curves::Intersection +
+        std::fmt::Debug + Clone + cnc_router::CNCPath> (
+        &mut self,
+        do_cut_on_odd: bool,
+        sign : sign::Sign<J>,
+        tool: &cnc_router::Tool,
+    ) {
+        let mut sign = sign;
+
+        let mut fill_rect = range_map::FillRect::from(
+            sign.bounding_rect().min_x(), sign.bounding_rect().min_y(),
+            sign.bounding_rect().max_x(), sign.bounding_rect().max_y()
+        );
+
+        let mut cleared = false;
+        let mut count = 0.5;
+        while !cleared {
+            cleared = true;
+            for (min_x, min_y, max_x, max_y) in fill_rect.get_open_rects() {
+                if (max_x - min_x) * (max_y - min_y) < 0.1 { continue }
+                let rect = lines_and_curves::Rectangle::from(
+                    lines_and_curves::Point::from(min_x, min_y),
+                    lines_and_curves::Point::from(max_x, max_y),
+                );
+                eprintln!(
+                    "(START)\n(({}, {}) ({}, {}) LENGTH: {})",
+                    min_x, min_y, max_x, max_y, (max_x - min_x) * (max_y - min_y)
+                );
+                cleared = false;
+                if !self.cut_broad_rect(
+                    do_cut_on_odd, &mut sign, tool, &rect, &mut fill_rect
+                ) {
+                    eprintln!("Force FILL");
+                    fill_rect.fill_rect(min_x, min_y, max_x, max_y);
+                    // cleared = true;
+                    // break;
+                } else {
+                    eprintln!("Updated");
+                }
+            }
+
+            count += 0.001;
+        }
+
+        eprintln!("VERY END");
+        for rect in fill_rect.get_open_rects() {
+            if rect.3 < 4.0 { continue }
+            eprintln!("{:?} = {}", rect, (rect.2 - rect.0) * (rect.3 - rect.1));
+        }
+    }
+
+    pub fn build_gcode_smart_path<J : lines_and_curves::Intersection +
+        std::fmt::Debug + Clone + cnc_router::CNCPath> (
+        &mut self,
+        do_cut_on_odd: bool,
+        signs : &Vec<sign::Sign<J> >,
+    ) {
+        let tools = self.cnc_router.get_tools().clone();
+        for (tool_index, tool) in tools.iter().enumerate() {
+            if !tool.is_broad() { continue }
+            self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
+            for sign in signs {
+                self.broad_smart_path(
+                    do_cut_on_odd,
+                    sign.clone(),
+                    &tool,
+                );
+            }
+        }
+    }
+
     pub fn get_router(&self) -> &cnc_router::CNCRouter<T> {
         &self.cnc_router
     }
@@ -272,5 +477,19 @@ impl <T: std::io::Write> GCodeCreator<T> {
     pub fn get_router_mut(&mut self) -> &mut cnc_router::CNCRouter<T> {
         &mut self.cnc_router
     }
+}
+
+fn float_loop(start: f64, threshold: f64, step_size: f64) -> impl Iterator<Item = f64> {
+    std::iter::successors(Some(start), move |&prev| {
+        let next = prev + step_size;
+        if prev >= threshold {
+            None
+        } else if next < threshold {
+            Some(next)
+        }
+        else {
+            Some(threshold)
+        }
+    })
 }
 
