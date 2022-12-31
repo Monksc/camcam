@@ -47,9 +47,9 @@ fn main() {
         vec![
             cnc_router::Tool {
                 name: String::from("Quarter Inch Bit"),
-                index_in_machine: 4,
+                index_in_machine: 2,
                 offset_length: 0.5,
-                radius: 0.1/2.0,
+                radius: 0.25/2.0,
                 length: 0.0,
                 front_angle: 0.0,
                 back_angle: 0.0,
@@ -59,8 +59,59 @@ fn main() {
                 smoothness:        cnc_router::Smoothness::Finish,
                 feed_rate_of_cut: feed_rate_of_cut,
                 feed_rate_of_drill: feed_rate_of_drill,
+                offset: 0.8,
+            },
+            cnc_router::Tool {
+                name: String::from("Exact Bit"),
+                index_in_machine: 1,
+                offset_length: 0.5,
+                radius: 0.0,
+                length: 0.0,
+                front_angle: 0.0,
+                back_angle: 0.0,
+                orientation: 0.0,
+                tool_type: cnc_router::ToolType::Text,
+                // smoothness: cnc_router::Smoothness::Medium,
+                smoothness:        cnc_router::Smoothness::Finish,
+                feed_rate_of_cut: feed_rate_of_cut,
+                feed_rate_of_drill: feed_rate_of_drill,
                 offset: 1.0,
             },
+            cnc_router::Tool {
+                name: String::from("Quarter Inch"),
+                index_in_machine: 2,
+                offset_length: 0.5,
+                radius: 0.25/2.0,
+                length: 0.0,
+                front_angle: 0.0,
+                back_angle: 0.0,
+                orientation: 0.0,
+                tool_type: cnc_router::ToolType::Text,
+                // smoothness: cnc_router::Smoothness::Medium,
+                smoothness:        cnc_router::Smoothness::Finish,
+                feed_rate_of_cut: feed_rate_of_cut,
+                feed_rate_of_drill: feed_rate_of_drill,
+                offset: 1.0,
+            },
+            // cnc_router::Tool {
+            //     name: String::from("Text Bit"),
+            //     index_in_machine: 1,
+            //     offset_length: 0.5,
+            //     radius: 1.0,
+            //     length: 0.0,
+            //     front_angle: 0.0,
+            //     back_angle: 0.0,
+            //     orientation: 0.0,
+            //     tool_type: cnc_router::ToolType::Text,
+            //     // smoothness: cnc_router::Smoothness::Medium,
+            //     smoothness:        cnc_router::Smoothness::Finish,
+            //     feed_rate_of_cut: feed_rate_of_cut,
+            //     feed_rate_of_drill: feed_rate_of_drill,
+            //     offset: 1.0,
+            // },
+
+
+
             // cnc_router::Tool {
             //     name: String::from("Quarter Inch Bit"),
             //     index_in_machine: 4,
@@ -219,10 +270,13 @@ fn main() {
                         // lines_and_curves::Point::from(6.0, 2.0), // Right
                         // lines_and_curves::Point::from(6.0, 6.0), // Bottom
                         // lines_and_curves::Point::from(2.0, 6.0), // Left
-                        lines_and_curves::Point::from(4.0, 2.0), // Top
-                        lines_and_curves::Point::from(6.0, 4.0), // Right
-                        lines_and_curves::Point::from(4.0, 6.0), // Bottom
-                        lines_and_curves::Point::from(2.0, 4.0), // Left
+                        // lines_and_curves::Point::from(4.0, 2.0), // Top
+                        // lines_and_curves::Point::from(6.0, 4.0), // Right
+                        // lines_and_curves::Point::from(4.0, 6.0), // Bottom
+                        // lines_and_curves::Point::from(2.0, 4.0), // Left
+                        lines_and_curves::Point::from(4.0, 4.0), // Right
+                        lines_and_curves::Point::from(6.0, 2.0), // Bottom
+                        lines_and_curves::Point::from(2.0, 2.0), // Left
                     ], true)
                     .iter()
                     .map(|x| lines_and_curves::AllIntersections::LineSegment(x.clone()))

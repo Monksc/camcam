@@ -31,6 +31,7 @@ pub struct CNCRouter<T: std::io::Write> {
     gcode_write: T,
     last_command: String,
     feed_rate: f64,
+    exact_stop_change_y: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -135,6 +136,7 @@ impl <T: std::io::Write> CNCRouter<T> {
             spindle_clock_speed: 0.0,
             last_command: String::new(),
             feed_rate: 0.0,
+            exact_stop_change_y: false,
         }
     }
 
@@ -178,7 +180,8 @@ impl <T: std::io::Write> CNCRouter<T> {
 
         self.set_feed_rate_to_units_per_minute();
         self.set_absolute_mode();
-        self.turn_on_exact_stop_mode();
+        // self.turn_on_exact_stop_mode();
+        self.set_exact_stop_on_y_change(true);
         self.write_gcode_command("G54", self.verbose_str(" (Change 0 coordinate)"));
         self.go_home();
         self.turn_fan(true);
@@ -468,7 +471,7 @@ impl <T: std::io::Write> CNCRouter<T> {
         };
         self.write_gcode_command(
             if can_be_skipped { "G31" } else { "G01" },
-            format!("X{} Y{} Z{}{}{}",
+            format!("G09 X{} Y{} Z{}{}{}",
                 self.format_float(self.pos.x),
                 self.format_float(self.pos.y),
                 self.format_float(self.pos.z),
@@ -485,6 +488,7 @@ impl <T: std::io::Write> CNCRouter<T> {
         &mut self, pos: &OptionalCoordinate,
         feed_rate: Option<f64>, can_be_skipped: bool
     ) {
+        let mut exact_cut = "";
         if let Some(x) = pos.x {
             self.pos.x = x;
         }
@@ -493,6 +497,7 @@ impl <T: std::io::Write> CNCRouter<T> {
         }
         if let Some(z) = pos.z {
             self.pos.z = z;
+            exact_cut = "G09 ";
         }
         let f = if let Some(f) = feed_rate {
             if self.feed_rate == f {
@@ -506,7 +511,8 @@ impl <T: std::io::Write> CNCRouter<T> {
         };
         self.write_gcode_command(
             if can_be_skipped { "G31" } else { "G01" },
-            format!("{}{}{}",
+            format!("{}{}{}{}",
+                exact_cut,
                 pos,
                 f,
                 self.verbose_string(
@@ -940,6 +946,10 @@ impl <T: std::io::Write> CNCRouter<T> {
             "G61",
             self.verbose_string(format!(" (Turns on exact stop mode.)"))
         )
+    }
+
+    pub fn set_exact_stop_on_y_change(&mut self, value: bool) {
+        self.exact_stop_change_y = value;
     }
 
     pub fn turn_on_automatic_corner_override_mode(&mut self) {
@@ -1554,6 +1564,12 @@ pub trait CNCPath {
         Vec::new()
     }
 
+    fn to_path_vec(
+        items: &Vec<&Self>,
+    ) -> Vec<OptionalCoordinate> {
+        items.iter().map(|item| item.to_path()).flatten().collect()
+    }
+
     fn is_connected(&self) -> bool;
 
     fn start_path(&self) -> Option<Coordinate>;
@@ -1568,6 +1584,143 @@ pub trait CNCPath {
                 &pos, feed_rate, false,
             )
         }
+    }
+
+    fn cut_till<T: std::io::Write>(
+        items: &Vec<&Self>,
+        x: Option<f64>,
+        y: Option<f64>,
+        cnc_router: &mut CNCRouter<T>,
+        feed_rate: Option<f64>,
+        force_drill: bool, // can only be true if x and y is none
+        feed_rate_of_drill: f64, // only in effect iff force_drill
+        z_axis_of_cut: f64, // only in effect iff force_drill
+        depth_of_cut: f64, // only in effect iff force_drill
+    ) -> bool {
+        let points = CNCPath::to_path_vec(items);
+
+        let mut new_points = Vec::new();
+        for p in points {
+            let (Some(x), Some(y)) = (p.x, p.y) else {
+                return false;
+            };
+            new_points.push(lines_and_curves::Point::from(x, y));
+        }
+
+        if new_points.len() < 3 {
+            return false;
+        }
+        new_points.push(new_points[0]);
+        if let Some(x) = x {
+            let start_pos = cnc_router.get_pos();
+            let mut start_index = 0;
+            let mut closest_distance = 0.1; // if no closer we might as well take index 0
+            for i in 0..new_points.len() {
+                let j = (i+1) % new_points.len();
+                let line = lines_and_curves::LineSegment::from(
+                    lines_and_curves::Point::from(
+                        new_points[i].x,
+                        new_points[i].y,
+                    ),
+                    lines_and_curves::Point::from(
+                        new_points[j].x,
+                        new_points[j].y,
+                    ),
+                );
+
+                let distance = line.distance_to_point(&lines_and_curves::Point::from(
+                    start_pos.x, start_pos.y
+                ));
+                if distance < closest_distance {
+                    closest_distance = distance;
+                    start_index = i;
+                }
+            }
+
+            let starting_point = cnc_router.get_pos();
+            for h in 0..new_points.len() {
+                let i = (h+start_index) % new_points.len();
+                let j = (h+start_index+1) % new_points.len();
+                // if x in the middle of [new_points[i].x, new_points[j].x]
+
+                let x_values = [x, starting_point.x];
+                for z in 0..(if h == 0 { 1 } else { 2 }) {
+                    let x = x_values[z];
+                    if (x > new_points[j].x && new_points[i].x > x) ||
+                        (x < new_points[j].x && new_points[i].x < x)
+                    {
+                        let line = lines_and_curves::LineSegment::from(
+                            lines_and_curves::Point::from(
+                                new_points[i].x,
+                                new_points[i].y,
+                            ),
+                            lines_and_curves::Point::from(
+                                new_points[j].x,
+                                new_points[j].y,
+                            ),
+                        );
+
+                        cnc_router.move_to_optional_coordinate(
+                            &OptionalCoordinate::from(
+                                Some(x),
+                                line.y(x),
+                                None,
+                            ),
+                            feed_rate, false,
+                        );
+                        return true;
+                    }
+                }
+                cnc_router.move_to_optional_coordinate(
+                    &OptionalCoordinate::from(
+                        Some(new_points[j].x),
+                        Some(new_points[j].y),
+                        None,
+                    ),
+                    feed_rate, false,
+                );
+            }
+        } if let Some(y) = y {
+
+        } else {
+            if force_drill {
+                cnc_router.move_to_coordinate_rapid(
+                    &cnc_router::Coordinate::from(
+                        new_points[0].x, new_points[0].y, z_axis_of_cut
+                    )
+                );
+
+                cnc_router.move_to_optional_coordinate(
+                    &cnc_router::OptionalCoordinate::from_z(
+                        Some(z_axis_of_cut + depth_of_cut)
+                    ),
+                    Some(feed_rate_of_drill), false,
+                );
+            }
+
+
+            for pos in new_points {
+                cnc_router.move_to_optional_coordinate(
+                    &OptionalCoordinate::from(
+                        Some(pos.x),
+                        Some(pos.y),
+                        None,
+                    ),
+                    feed_rate, false,
+                )
+            }
+
+            if force_drill {
+                cnc_router.move_to_optional_coordinate(
+                    &cnc_router::OptionalCoordinate::from_z(
+                        Some(z_axis_of_cut)
+                    ),
+                    Some(feed_rate_of_drill), false,
+                );
+            }
+        }
+
+        true
     }
 }
 

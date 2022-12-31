@@ -10,8 +10,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-algorithms = {  git = "https://github.com/Monksc/algorithms_rust_lib", rev = "c150912"}
+algorithms = {  git = "https://github.com/Monksc/algorithms_rust_lib", rev = "c3bc40e"}
 # algorithms = { path = "../algorithms_rust_lib/" }
-range_map = {  git = "https://github.com/Monksc/range_map", rev = "cebc2da"}
-# range_map = { path = "../range_map/" }
+range_map = {  git = "https://github.com/Monksc/range_map", rev = "d1e2994"}
+#range_map = { path = "../range_map/" }
 

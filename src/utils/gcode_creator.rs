@@ -456,16 +456,295 @@ impl <T: std::io::Write> GCodeCreator<T> {
         do_cut_on_odd: bool,
         signs : &Vec<sign::Sign<J> >,
     ) {
+        self.cut_text(do_cut_on_odd, signs);
+
         let tools = self.cnc_router.get_tools().clone();
         for (tool_index, tool) in tools.iter().enumerate() {
             if !tool.is_broad() { continue }
             self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
+
             for sign in signs {
-                self.broad_smart_path(
+                eprintln!("LEN: {} = {}", sign.shapes().len(), sign.expand_lines(tool.radius, do_cut_on_odd).shapes().len());
+                self.broad_smart_path2(
                     do_cut_on_odd,
-                    sign.clone(),
-                    &tool,
+                    sign.expand_lines(tool.radius, do_cut_on_odd),
+                    // sign.clone(),
+                    tool,
                 );
+            }
+        }
+
+        // self.cut_text(do_cut_on_odd, signs);
+    }
+
+
+    // MARK: Smart method 2
+
+    pub fn cut_broad_smart_path2<J : lines_and_curves::Intersection +
+        std::fmt::Debug + Clone + cnc_router::CNCPath> (
+        &mut self,
+        do_cut_on_odd: bool,
+        sign : &mut sign::Sign<J>,
+        tool: &cnc_router::Tool,
+        fill_rect: &mut range_map::FillRect,
+        x: f64,
+        y: f64,
+        increment: f64,
+    ) {
+        let mut sign = sign;
+        let mut x = x;
+        let mut y = y;
+
+        if (sign.y_values_before(x, y) % 2 == 1)
+            != do_cut_on_odd {
+            return;
+        } else if let Some((distance, _, shape)) = sign.closest_shape(
+            &lines_and_curves::Point::from(x, y)
+        ) {
+            if distance < tool.radius {
+                return;
+            }
+        }
+
+        let z_axis_off_cut = self.z_axis_off_cut + tool.length; 
+
+        let mut moved = false;
+        let mut prev_i_move = 9999;
+        'main: loop {
+            let prev_x = x;
+            let prev_y = y;
+            let mut found_new_value = false;
+            for i in 0..7 {
+                if i == prev_i_move && i == 2 { continue; }
+                if i >= 2 && !moved { continue }
+                if i == 2 {
+                    if !moved { continue }
+                    if let Some((distance, _, shape)) = sign.closest_shape(
+                        &lines_and_curves::Point::from(
+                            self.cnc_router.get_pos().x, self.cnc_router.get_pos().y
+                        )
+                    ) {
+                        // if distance > tool.radius + 0.00001 {
+                        if distance > 0.1 {
+                            continue;
+                        }
+                        let shape = shape.clone();
+                        let mut new_lines = Vec::new();
+                        for line in shape.lines() {
+                            new_lines.push(line);
+                        }
+
+                        // println!("(FOLLOW PATH)");
+                        cnc_router::CNCPath::cut_till::<T>(
+                            &new_lines,
+                            Some(self.cnc_router.get_pos().x + increment),
+                            None,
+                            &mut self.cnc_router,
+                            Some(tool.feed_rate_of_cut),
+                            false,
+                            tool.feed_rate_of_drill,
+                            self.z_axis_off_cut,
+                            self.depth_of_cut,
+                        );
+                        // println!("(END PATH)");
+                        let pos = self.cnc_router.get_pos();
+                        x = pos.x;
+                        y = pos.y;
+                        prev_i_move = i;
+                        continue 'main;
+                    }
+                    continue;
+                }
+
+
+                let (new_x, new_y) = match i {
+                    0 => (x, sign.get_next_y_value(x, y+0.0001)),
+                    1 => (x, sign.get_prev_y_value(x, y-0.0001)),
+                    3 => (x + increment, y),
+                    4 => (x - increment, y),
+                    5 => (x, y + increment),
+                    _ => (x, y - increment),
+                };
+
+                if (
+                        ((x - new_x).abs() + (y - new_y).abs() + 0.0001) >= increment
+                    ) &&
+                    sign.sees_even_odd_lines_before(new_x, new_y, do_cut_on_odd, true) &&
+                    sign.sees_even_odd_lines_before((new_x+x)/2.0, (new_y+y)/2.0, do_cut_on_odd, true) &&
+                    // (
+                    //     (sign.y_values_before(new_x, new_y) % 2 == 1)
+                    //     == do_cut_on_odd
+                    // ) &&
+                    !sign.line_collides_wth_rect(
+                        &lines_and_curves::Rectangle::from_rect_add_radius(
+                            &lines_and_curves::Rectangle::from(
+                                lines_and_curves::Point::from(x, y),
+                                lines_and_curves::Point::from(new_x, new_y),
+                            ),
+                            -0.0001
+                        )
+                    ) &&
+                    !fill_rect.is_fill_padding(
+                        x, y,
+                        new_x, new_y,
+                        tool.radius, tool.radius,
+                    )
+                {
+                    // println!("(i: {})", i);
+                    x = new_x;
+                    y = new_y;
+                    found_new_value = true;
+                    prev_i_move = i;
+                    break;
+                } 
+            }
+            if !found_new_value {
+                if moved {
+                    // println!("(FAILED)");
+                    self.cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(z_axis_off_cut),
+                        ),
+                        Some(tool.feed_rate_of_drill), false,
+                    );
+                }
+                return;
+            }
+
+            if !moved {
+                self.cnc_router.move_to_coordinate_rapid(
+                    &cnc_router::Coordinate::from(
+                        prev_x, prev_y, z_axis_off_cut,
+                    ),
+                );
+                self.cnc_router.move_to_optional_coordinate(
+                    &cnc_router::OptionalCoordinate::from_z(
+                        Some(z_axis_off_cut + self.depth_of_cut),
+                    ),
+                    Some(tool.feed_rate_of_drill), false,
+                );
+                moved = true;
+            }
+
+            let min_x = if prev_x < x { prev_x } else { x };
+            let max_x = if prev_x > x { prev_x } else { x };
+            let min_y = if prev_y < y { prev_y } else { y };
+            let max_y = if prev_y > y { prev_y } else { y };
+
+            fill_rect.fill_rect(
+                min_x-tool.radius, min_y-tool.radius,
+                max_x+tool.radius, max_y+tool.radius,
+            );
+            self.cnc_router.move_to_optional_coordinate(
+                &cnc_router::OptionalCoordinate::from(
+                    Some(x),
+                    Some(y),
+                    None
+                ),
+                Some(tool.feed_rate_of_cut), false,
+            );
+        }
+    }
+
+    pub fn broad_smart_path2<J : lines_and_curves::Intersection +
+        std::fmt::Debug + Clone + cnc_router::CNCPath> (
+        &mut self,
+        do_cut_on_odd: bool,
+        sign : sign::Sign<J>,
+        tool: &cnc_router::Tool,
+    ) {
+        let mut sign = sign;
+
+        let mut fill_rect = range_map::FillRect::from(
+            sign.bounding_rect().min_x(), sign.bounding_rect().min_y(),
+            sign.bounding_rect().max_x(), sign.bounding_rect().max_y()
+        );
+        eprintln!("({}, {}) -> ({}, {})",
+            sign.bounding_rect().min_x(), sign.bounding_rect().min_y(),
+            sign.bounding_rect().max_x(), sign.bounding_rect().max_y()
+        );
+
+        let increment = 2.0 * tool.radius * tool.offset;
+        let bounding_rect = sign.bounding_rect().clone();
+        for x in float_loop(
+            bounding_rect.min_x() + tool.radius,
+            bounding_rect.max_x() - tool.radius,
+            increment
+        ) {
+            for y in float_loop(
+                bounding_rect.min_y() + tool.radius,
+                bounding_rect.max_y() - tool.radius,
+                increment
+            ) {
+                self.cut_broad_smart_path2(
+                    do_cut_on_odd, &mut sign, &tool,
+                    &mut fill_rect, x, y, increment,
+                );
+            }
+        }
+
+        eprintln!("VERY END");
+        for rect in fill_rect.get_open_rects() {
+            if rect.3 < 4.0 { continue }
+            eprintln!("{:?} = {}", rect, (rect.2 - rect.0) * (rect.3 - rect.1));
+        }
+    }
+
+    pub fn cut_text<
+        J : lines_and_curves::Intersection +
+        std::fmt::Debug + Clone + cnc_router::CNCPath
+    > (
+        &mut self,
+        do_cut_on_odd: bool,
+        signs : &Vec<sign::Sign<J> >,
+    ) {
+        let tools = self.cnc_router.get_tools().clone();
+        for (tool_index, tool) in tools.iter().enumerate() {
+            if !tool.is_text() { continue }
+            self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
+
+            for sign in signs {
+                let sign = sign.expand_lines(tool.radius, do_cut_on_odd);
+                let shapes = sign.shapes().clone();
+                for shape in shapes {
+                    let mut new_lines = Vec::new();
+                    for line in shape.lines() {
+                        new_lines.push(line);
+                    }
+                    // let Some(point) = new_lines[0].start_path() else { continue };
+                    // println!("(MOVE RAPID)");
+                    // self.cnc_router.move_to_coordinate_rapid(
+                    //     &cnc_router::Coordinate::from(
+                    //         point.x, point.y, self.z_axis_off_cut,
+                    //     )
+                    // );
+
+                    // self.cnc_router.move_to_optional_coordinate(
+                    //     &cnc_router::OptionalCoordinate::from_z(
+                    //         Some(self.z_axis_off_cut + self.depth_of_cut)
+                    //     ),
+                    //     Some(tool.feed_rate_of_drill), false,
+                    // );
+
+                    cnc_router::CNCPath::cut_till::<T>(
+                        &new_lines,
+                        None,
+                        None,
+                        &mut self.cnc_router,
+                        Some(tool.feed_rate_of_cut),
+                        true,
+                        tool.feed_rate_of_drill,
+                        self.z_axis_off_cut,
+                        self.depth_of_cut,
+                    );
+
+                    self.cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(self.z_axis_off_cut)
+                        ),
+                        Some(tool.feed_rate_of_drill), false,
+                    );
+                }
             }
         }
     }

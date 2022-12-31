@@ -36,6 +36,15 @@ pub trait Intersection {
     }
     fn intersects_rectangle(&self, rect : &Rectangle) -> bool;
     fn bounding_box(&self) -> Rectangle;
+    fn closest_distance_to_point(&self, point: &Point) -> f64;
+
+    // Used a bit_radius on a cnc router
+    // make a new path with intersections farther away from not cut zone by radius
+    fn add_radius(
+        items: &Vec<&Self>,
+        radius: f64,
+        can_cut: Box<impl FnMut(f64, f64) -> bool>,
+    ) -> Vec<Box<Self>>;
 }
 
 #[derive(Debug, Clone)]
@@ -82,69 +91,7 @@ impl Circle {
         self.center.x - self.radius <= x && self.center.x + self.radius >= x
     }
     pub fn distance_to_center(&self, line: &LineSegment) -> f64 {
-        // TODO: This function really needs to be speed up a bit.
-        // Maybe look up the best way how instead of trying to figure
-        //      out on your own.
-
-        // theta = atan(
-        //      [cos a2 (d(p2) / d(p1)) - cos a1 ] /
-        //      [sin a2 (d(p2) / d(p1)) - sin a1 ]
-        // )
-
-        let degrees = if line.p1 == Point::zero() && line.p2 == Point::zero() {
-            0.0
-        } else if line.p1 == Point::zero() {
-            let a = (line.p2.x / line.p2.distance_to(&Point::zero())).acos();
-            std::f64::consts::PI/2.0 - a
-        } else if line.p2 == Point::zero() {
-            let a = (line.p1.x / line.p1.distance_to(&Point::zero())).acos();
-            std::f64::consts::PI/2.0 - a
-        } else {
-            let a1 = (line.p1.x / line.p1.distance_to(&Point::zero())).acos();
-            let a2 = (line.p2.x / line.p2.distance_to(&Point::zero())).acos();
-
-            let p1d = line.p1.distance_to(&Point::zero());
-            let p2d = line.p2.distance_to(&Point::zero());
-
-            (
-                (a2.cos() * (p2d / p1d) - a1.cos()) /
-                (a2.sin() * (p2d / p1d) - a1.sin())
-            ).atan()
-        };
-
-
-        let l11 = degrees.cos();
-        let l12 = -degrees.sin();
-        let l21 = degrees.sin();
-        let l22 = degrees.cos();
-
-        let m = (l11, l12, l21, l22);
-        let p1 = multiply_matrix_m(m, line.p1.x, line.p1.y);
-        let p2 = multiply_matrix_m(m, line.p2.x, line.p2.y);
-        let c  = multiply_matrix_m(m, self.center.x, self.center.y);
-
-        // println!("P1: ({}, {})", p1.0, p1.1);
-        // println!("P2: ({}, {})", p2.0, p2.1);
-        // println!("C : ({}, {})", c.0, c.1);
-        if p1.1 > c.1 && p2.1 > c.1 {
-            let c = Point::from(c.0, c.1);
-            return if p1.1 > p2.1 {
-                Point::from(p2.0, p2.1).distance_to(&c)
-            } else {
-                Point::from(p1.0, p1.1).distance_to(&c)
-            };
-        }
-
-        if p1.1 < c.1 && p2.1 < c.1 {
-            let c = Point::from(c.0, c.1);
-            return if p1.1 < p2.1 {
-                Point::from(p2.0, p2.1).distance_to(&c)
-            } else {
-                Point::from(p1.0, p1.1).distance_to(&c)
-            };
-        }
-
-        (p1.0 - c.0).abs()
+        line.distance_to_point(&self.center)
     }
 }
 
@@ -166,6 +113,25 @@ impl Rectangle {
             start_point: start_point,
             end_point: end_point,
         }
+    }
+
+    pub fn from_rect_add_radius(rect: &Rectangle, radius: f64) -> Self {
+        let mut r = Rectangle::from(
+            Point::from(rect.min_x() - radius, rect.min_y() - radius),
+            Point::from(rect.max_x() + radius, rect.max_y() + radius),
+        );
+
+        if r.start_point.x > r.end_point.x {
+            r.start_point.x = (rect.start_point.x + rect.end_point.x) / 2.0;
+            r.end_point.x = r.start_point.x;
+        }
+
+        if r.start_point.y > r.end_point.y {
+            r.start_point.y = (rect.start_point.y + rect.end_point.y) / 2.0;
+            r.end_point.y = r.start_point.y;
+        }
+
+        return r;
     }
 
     pub fn p1(&self) -> Point {
@@ -372,6 +338,35 @@ impl LineSegment {
         self.p2
     }
 
+    pub fn point_of_interception_endless_lines(
+        &self, line: &LineSegment
+    ) -> Option<Point> {
+
+        let Some((b1, m1)) = self.y_intercept_and_slope() else {
+            let Some((b2, m2)) = line.y_intercept_and_slope() else {
+                return None
+            };
+            let x = self.p1.x;
+            let y = x * m2 + b2;
+            return Some(Point::from(x, y));
+        };
+
+        let Some((b2, m2)) = line.y_intercept_and_slope() else {
+            let x = line.p1.x;
+            let y = x * m1 + b1;
+            return Some(Point::from(x, y));
+        };
+
+        if m1 == m2 {
+            return None;
+        }
+
+        let x = (b2 - b1) / (m1 - m2);
+        let y = m1 * x + b1;
+
+        return Some(Point::from(x, y));
+    }
+
     pub fn create_path(points: &Vec<Point>, enclose: bool) -> Vec<Self> {
         let mut r = Vec::new();
         let mut last_point: Option<Point> = None;
@@ -481,6 +476,72 @@ impl LineSegment {
             point.x == self.p1.x
         }
     }
+
+    pub fn distance_to_point(&self, point: &Point) -> f64 {
+        // TODO: This function really needs to be speed up a bit.
+        // Maybe look up the best way how instead of trying to figure
+        //      out on your own.
+
+        // theta = atan(
+        //      [cos a2 (d(p2) / d(p1)) - cos a1 ] /
+        //      [sin a2 (d(p2) / d(p1)) - sin a1 ]
+        // )
+
+        let degrees = if self.p1 == Point::zero() && self.p2 == Point::zero() {
+            0.0
+        } else if self.p1 == Point::zero() {
+            let a = (self.p2.x / self.p2.distance_to(&Point::zero())).acos();
+            std::f64::consts::PI/2.0 - a
+        } else if self.p2 == Point::zero() {
+            let a = (self.p1.x / self.p1.distance_to(&Point::zero())).acos();
+            std::f64::consts::PI/2.0 - a
+        } else {
+            let a1 = (self.p1.x / self.p1.distance_to(&Point::zero())).acos();
+            let a2 = (self.p2.x / self.p2.distance_to(&Point::zero())).acos();
+
+            let p1d = self.p1.distance_to(&Point::zero());
+            let p2d = self.p2.distance_to(&Point::zero());
+
+            (
+                (a2.cos() * (p2d / p1d) - a1.cos()) /
+                (a2.sin() * (p2d / p1d) - a1.sin())
+            ).atan()
+        };
+
+
+        let l11 = degrees.cos();
+        let l12 = -degrees.sin();
+        let l21 = degrees.sin();
+        let l22 = degrees.cos();
+
+        let m = (l11, l12, l21, l22);
+        let p1 = multiply_matrix_m(m, self.p1.x, self.p1.y);
+        let p2 = multiply_matrix_m(m, self.p2.x, self.p2.y);
+        let c  = multiply_matrix_m(m, point.x, point.y);
+
+        // println!("P1: ({}, {})", p1.0, p1.1);
+        // println!("P2: ({}, {})", p2.0, p2.1);
+        // println!("C : ({}, {})", c.0, c.1);
+        if p1.1 > c.1 && p2.1 > c.1 {
+            let c = Point::from(c.0, c.1);
+            return if p1.1 > p2.1 {
+                Point::from(p2.0, p2.1).distance_to(&c)
+            } else {
+                Point::from(p1.0, p1.1).distance_to(&c)
+            };
+        }
+
+        if p1.1 < c.1 && p2.1 < c.1 {
+            let c = Point::from(c.0, c.1);
+            return if p1.1 < p2.1 {
+                Point::from(p2.0, p2.1).distance_to(&c)
+            } else {
+                Point::from(p1.0, p1.1).distance_to(&c)
+            };
+        }
+
+        (p1.0 - c.0).abs()
+    }
 }
 
 impl Intersection for LineSegment {
@@ -505,28 +566,6 @@ impl Intersection for LineSegment {
         } else {
             return Vec::new();
         }
-
-        // if let Some(y) = self.y(x) {
-        //     return vec![
-        //         y
-        //     ];
-        // }
-
-        // if let Some(y) = (LineSegment::from_include(
-        //         self.p1,
-        //         self.p2,
-        //         true,
-        //         true
-        //     )).y(x) {
-
-        //     if (self.p1.x > self.p2.x && next.p2.x > next.p1.x) ||
-        //         (self.p1.x < self.p2.x && next.p2.x < next.p1.x) {
-        //         return vec![
-        //             y
-        //         ];
-        //     }
-        // }
-        // return Vec::new()
     }
     fn times_cross_line(&self, line: &LineSegment) -> usize {
         if match (self.y_intercept_and_slope(), line.y_intercept_and_slope()) {
@@ -596,6 +635,149 @@ impl Intersection for LineSegment {
 
     fn bounding_box(&self) -> Rectangle {
         Rectangle::from(self.p1, self.p2)
+    }
+
+    fn closest_distance_to_point(&self, point: &Point) -> f64 {
+        self.distance_to_point(&point)
+    }
+
+    fn add_radius<'a>(
+        items: &Vec<&'a Self>,
+        bit_radius: f64,
+        mut can_cut: Box<impl FnMut(f64, f64) -> bool>,
+    ) -> Vec<Box<Self>> {
+        if items.len() < 3 { return Vec::new(); }
+        let mut points = Vec::new();
+        // points.push(items[0].p1);
+        for line in items {
+            points.push(line.p1);
+        }
+
+        let mut new_points = Vec::new();
+
+        for i in 0..points.len() {
+            let j = (i+1) % points.len();
+            let k = (i+2) % points.len();
+            let (
+                ix, iy,
+                jx, jy,
+                kx, ky,
+            ) = (
+                points[i].x, points[i].y,
+                points[j].x, points[j].y,
+                points[k].x, points[k].y,
+            );
+
+            let epsilon = 0.01; // std::f64::EPSILON;
+
+            let ij_dx;
+            let ij_dy;
+
+            if let Some(ijm) = lines_and_curves::LineSegment::from_ray(
+                lines_and_curves::Point::from(ix, iy),
+                lines_and_curves::Point::from(jx, jy),
+            ).slope() {
+                let reverse_m = -1.0 / ijm;
+                let total = (reverse_m * reverse_m + 1.0).sqrt();
+                let dx = if ijm == 0.0 { 0.0 } else { 1.0 / total };
+                let dy = if ijm == 0.0 { 1.0 } else { reverse_m / total };
+                if can_cut(
+                    (ix+jx) / 2.0 + dx * epsilon,
+                    (iy+jy) / 2.0 + dy * epsilon
+                ) {
+                    ij_dx = dx;
+                    ij_dy = dy;
+                } else {
+                    ij_dx = -dx;
+                    ij_dy = -dy;
+                }
+            } else {
+                if can_cut(
+                    (ix+jx) / 2.0 + epsilon,
+                    (iy+jy) / 2.0
+                ) {
+                    ij_dx = 1.0;
+                    ij_dy = 0.0;
+                } else {
+                    ij_dx = -1.0;
+                    ij_dy = 0.0;
+                }
+            }
+
+            let jk_dx;
+            let jk_dy;
+            if let Some(jkm) = lines_and_curves::LineSegment::from_ray(
+                lines_and_curves::Point::from(jx, jy),
+                lines_and_curves::Point::from(kx, ky),
+            ).slope() {
+                let reverse_m = -1.0 / jkm;
+                let total = (reverse_m * reverse_m + 1.0).sqrt();
+                let dx = if jkm == 0.0 { 0.0 } else { 1.0 / total };
+                let dy = if jkm == 0.0 { 1.0 } else { reverse_m / total };
+
+                if can_cut(
+                    (jx + kx) / 2.0 + dx * epsilon,
+                    (jy + ky) / 2.0 + dy * epsilon
+                ) {
+                    jk_dx = dx;
+                    jk_dy = dy;
+                } else {
+                    jk_dx = -dx;
+                    jk_dy = -dy;
+                }
+            } else {
+                if can_cut(
+                    (jx+kx) / 2.0 + epsilon,
+                    (jy+ky) / 2.0
+                ) {
+                    jk_dx = 1.0;
+                    jk_dy = 0.0;
+                } else {
+                    jk_dx = -1.0;
+                    jk_dy = 0.0;
+                }
+            }
+
+            let line_ij = lines_and_curves::LineSegment::from(
+                lines_and_curves::Point::from(
+                    ix + ij_dx * bit_radius,
+                    iy + ij_dy * bit_radius,
+                ),
+                lines_and_curves::Point::from(
+                    jx + ij_dx * bit_radius,
+                    jy + ij_dy * bit_radius,
+                ),
+            );
+
+            let line_jk = lines_and_curves::LineSegment::from(
+                lines_and_curves::Point::from(
+                    jx + jk_dx * bit_radius,
+                    jy + jk_dy * bit_radius,
+                ),
+                lines_and_curves::Point::from(
+                    kx + jk_dx * bit_radius,
+                    ky + jk_dy * bit_radius,
+                ),
+            );
+
+            if let Some(intersect_point) =
+                line_ij.point_of_interception_endless_lines(&line_jk) {
+                new_points.push(intersect_point);
+            } else {
+                eprintln!("FUCKE HERE");
+                // return Vec::new();
+                // try for something
+                new_points.push(line_ij.p2);
+            };
+
+        }
+        let mut lines = Vec::new();
+        for i in 0..new_points.len() {
+            let j = (i+1) % points.len();
+            lines.push(Box::from(
+                LineSegment::from_ray(new_points[i], new_points[j])));
+        }
+        return lines;
     }
 }
 
@@ -700,6 +882,39 @@ impl Intersection for Rectangle {
     fn bounding_box(&self) -> Rectangle {
         self.clone()
     }
+
+    fn closest_distance_to_point(&self, point: &Point) -> f64 {
+        let mut min = f64::MAX;
+        let points = self.to_points();
+        for i in 0..points.len() {
+            let line = LineSegment::from(
+                points[i], points[(i+1)%points.len()], 
+            );
+            let distance = line.distance_to_point(&point);
+            if distance < min {
+                min = distance;
+            }
+        }
+
+        return min;
+    }
+
+    fn add_radius(
+        items: &Vec<&Self>,
+        radius: f64,
+        can_cut: Box<impl FnMut(f64, f64) -> bool>,
+    ) -> Vec<Box<Self>> {
+        let mut new_rects = Vec::new();
+        for rect in items {
+new_rects.push(Box::from(
+                Rectangle::from(
+                    Point::from(rect.min_x() - radius, rect.min_y() - radius),
+                    Point::from(rect.max_x() + radius, rect.max_y() + radius),
+                )
+            ));
+        }
+        return new_rects;
+    }
 }
 
 impl cnc_router::CNCPath for Rectangle {
@@ -802,6 +1017,32 @@ impl Intersection for Circle {
                 self.center.y + self.radius,
             ),
         )
+    }
+
+    fn closest_distance_to_point(&self, point: &Point) -> f64 {
+        let distance = self.center.distance_to(&point) - self.radius;
+        if distance < 0.0 {
+            0.0
+        } else {
+            distance
+        }
+    }
+
+    fn add_radius(
+        items: &Vec<&Self>,
+        radius: f64,
+        can_cut: Box<impl FnMut(f64, f64) -> bool>,
+    ) -> Vec<Box<Self>> {
+        let mut v = Vec::new();
+
+        for circle in items {
+            v.push(Box::from(Circle{
+                center: circle.center,
+                radius: circle.radius + radius,
+            }));
+        }
+
+        return v;
     }
 }
 
@@ -1080,6 +1321,99 @@ impl Intersection for AllIntersections {
             }
             AllIntersections::Circle(c) => {
                 c.bounding_box()
+            }
+        }
+    }
+    fn closest_distance_to_point(&self, point: &Point) -> f64 {
+        match self {
+            AllIntersections::Rectangle(r) => {
+                r.closest_distance_to_point(&point)
+            }
+            AllIntersections::LineSegment(s) => {
+                s.closest_distance_to_point(&point)
+            }
+            AllIntersections::SoftLineSegment(s) => {
+                s.closest_distance_to_point(&point)
+            }
+            AllIntersections::Circle(c) => {
+                c.closest_distance_to_point(&point)
+            }
+        }
+    }
+
+    fn add_radius(
+        items: &Vec<&Self>,
+        radius: f64,
+        can_cut: Box<impl FnMut(f64, f64) -> bool>,
+    ) -> Vec<Box<Self>> {
+        if items.len() == 0 {
+            return Vec::new();
+        }
+
+        match items[0] {
+            AllIntersections::Rectangle(_) => {
+                let v : Vec<&Rectangle> = items.iter().filter_map(|x| {
+                    if let AllIntersections::Rectangle(r) = x {
+                        Some(r)
+                    } else {
+                        None
+                    }
+                }).collect();
+                Intersection::add_radius(
+                    &v,
+                    radius,
+                    can_cut,
+                ).iter().map(|r| {
+                    Box::from(AllIntersections::Rectangle(*r.clone()))
+                }).collect()
+            }
+            AllIntersections::LineSegment(_) => {
+                let v = items.iter().filter_map(|x| {
+                    if let AllIntersections::LineSegment(l) = x {
+                        Some(l)
+                    } else {
+                        None
+                    }
+                }).collect();
+                Intersection::add_radius(
+                    &v,
+                    radius,
+                    can_cut,
+                ).iter().map(|l| {
+                    Box::from(AllIntersections::LineSegment(*l.clone()))
+                }).collect()
+            }
+            AllIntersections::SoftLineSegment(_) => {
+                let v = items.iter().filter_map(|x| {
+                    if let AllIntersections::SoftLineSegment(l) = x {
+                        Some(l)
+                    } else {
+                        None
+                    }
+                }).collect();
+                Intersection::add_radius(
+                    &v,
+                    radius,
+                    can_cut,
+                ).iter().map(|l| {
+                    Box::from(AllIntersections::SoftLineSegment(*l.clone()))
+                }).collect()
+            }
+            AllIntersections::Circle(_) => {
+                let v = items.iter().filter_map(|x| {
+                    if let AllIntersections::Circle(c) = x {
+                        Some(c)
+                    } else {
+                        None
+                    }
+                }).collect();
+                Intersection::add_radius(
+                    &v,
+                    radius,
+                    can_cut,
+                ).iter().map(|c| {
+                    Box::from(AllIntersections::Circle(*c.clone()))
+                }).collect()
             }
         }
     }
@@ -1619,5 +1953,45 @@ mod test {
         assert!(test_float(circle.distance_to_center(&line5), 0.0));
         assert!(test_float(circle.distance_to_center(&line6), 0.0));
         assert!(test_float(circle.distance_to_center(&line7), (25.0 + 36.0 as f64).sqrt()));
+    }
+
+    #[test]
+    pub fn test_point_of_interception_endless_lines() {
+        let line1 = LineSegment::from(
+            Point::from(0.0, 0.0),
+            Point::from(1.0, 1.0),
+        );
+        let line2 = LineSegment::from(
+            Point::from(0.0, 1.0),
+            Point::from(1.0, 0.0),
+        );
+        let line_up = LineSegment::from(
+            Point::from(0.0, 0.1),
+            Point::from(0.0, 1.0),
+        );
+        let line_right = LineSegment::from(
+            Point::from(0.1, 0.0),
+            Point::from(1.0, 0.0),
+        );
+
+        assert_eq!(
+            line1.point_of_interception_endless_lines(&line2),
+            Some(Point::from(0.5, 0.5))
+        );
+
+        assert_eq!(
+            line1.point_of_interception_endless_lines(&line_up),
+            Some(Point::from(0.0, 0.0))
+        );
+
+        assert_eq!(
+            line1.point_of_interception_endless_lines(&line_right),
+            Some(Point::from(0.0, 0.0))
+        );
+
+        assert_eq!(
+            line_up.point_of_interception_endless_lines(&line_right),
+            Some(Point::from(0.0, 0.0))
+        );
     }
 }

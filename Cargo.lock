@@ -5,7 +5,10 @@ version = 3
 [[package]]
 name = "algorithms"
 version = "0.1.0"
-source = "git+https://github.com/Monksc/algorithms_rust_lib?rev=c150912#c150912ce644d672cbf783a00e0e367653d2ea5f"
+source = "git+https://github.com/Monksc/algorithms_rust_lib?rev=c3bc40e#c3bc40e5532fc3cd85c3589fa89796b9cc2980c3"
+dependencies = [
+ "queues",
+]
 
 [[package]]
 name = "camcam"
@@ -16,9 +19,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "queues"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1475abae4f8ad4998590fe3acfe20104f0a5d48fc420c817cd2c09c3f56151f0"
+
+[[package]]
 name = "range_map"
 version = "0.1.0"
-source = "git+https://github.com/Monksc/range_map?rev=cebc2da#cebc2daa723360a032ac3576dcab4eafb1025a85"
+source = "git+https://github.com/Monksc/range_map?rev=d1e2994#d1e2994f4bd53501ee9c0b2ac44d73a5298759e2"
 dependencies = [
  "algorithms",
 ]

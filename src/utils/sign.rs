@@ -67,10 +67,81 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         &self.shapes
     }
 
+    pub fn expand_lines(
+        &self,
+        bit_radius: f64,
+        do_cut_on_odd: bool
+    ) -> Self {
+        let mut shapes : Vec<Shape<T>> = Vec::new();
+
+        let mut sign_copy = self.clone();
+
+        for shape in &self.shapes {
+            let mut lines : Vec<&T> = Vec::new();
+            for line in shape.lines() {
+                lines.push(line);
+            }
+            let new_lines : Vec<Box<T>> =
+                lines_and_curves::Intersection::add_radius(
+                    &lines, bit_radius, Box::from(|x, y| {
+                    (sign_copy.y_values_before(x, y) % 2 == 1) == do_cut_on_odd
+                }));
+            let new_lines : Vec<T> =
+                new_lines.iter().map(|x| *x.clone()).collect();
+            let len = new_lines.len();
+            shapes.push(Shape::from(shape.tool_type, new_lines));
+            eprintln!("{} -> {}", lines.len(), len);
+        }
+
+        return Self::from(
+            self.bounding_rect.clone(),
+            shapes,
+        );
+    }
+
+    pub fn closest_shape(&self, point: &lines_and_curves::Point) -> Option<(f64, &T, &Shape<T>)> {
+        let mut closest = None;
+        for shape in &self.shapes {
+            let Some((distance, intersection)) = shape.closest_line(&point) else {
+                continue
+            };
+
+            if let Some((shortest_distance, _, _)) = closest {
+                if distance < shortest_distance {
+                    closest = Some((distance, intersection, shape));
+                }
+            } else {
+                closest = Some((distance, intersection, &shape));
+            }
+        }
+
+        return closest;
+    }
+
+    pub fn sees_even_odd_lines_before(
+        &mut self,
+        x: f64, y: f64,
+        do_cut_on_odd: bool,
+        can_be_equal: bool
+    ) -> bool {
+        ((self.y_values_before(x, y) % 2 == 1) == do_cut_on_odd) ||
+            (can_be_equal &&
+             ((self.y_values_before_or_equal(x, y) % 2 == 1) == do_cut_on_odd))
+    }
+
     pub fn y_values_before(&mut self, x: f64, y: f64) -> usize {
         let mut seen = 0;
         for shape in &mut self.shapes {
             seen += shape.y_values_before(x, y);
+        }
+
+        return seen;
+    }
+
+    pub fn y_values_before_or_equal(&mut self, x: f64, y: f64) -> usize {
+        let mut seen = 0;
+        for shape in &mut self.shapes {
+            seen += shape.y_values_before_or_equal(x, y);
         }
 
         return seen;
@@ -147,6 +218,24 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
         &self.lines
     }
 
+    pub fn closest_line(&self, point: &lines_and_curves::Point)
+        -> Option<(f64, &T)> {
+        let mut closest : Option<(f64, &T)> = None;
+
+        for line in &self.lines {
+            let distance = line.closest_distance_to_point(&point);
+            if let Some((shortest_distance, _)) = closest {
+                if distance < shortest_distance {
+                    closest = Some((distance, &line));
+                }
+            } else {
+                closest = Some((distance, &line));
+            }
+        }
+
+        return closest;
+    }
+
     pub fn add_x_layer(&mut self, x: f64) {
         if self.get_y_values(x).len() > 0 {
             return;
@@ -197,6 +286,17 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
 
         for y_values in self.get_y_values(x) {
             seen += algorithms::seen_before(y_values, y);
+        }
+
+        return seen;
+    }
+
+    pub fn y_values_before_or_equal(&mut self, x: f64, y: f64) -> usize {
+        self.add_x_layer(x);
+        let mut seen = 0;
+
+        for y_values in self.get_y_values(x) {
+            seen += algorithms::seen_before_or_equal(y_values, y);
         }
 
         return seen;
