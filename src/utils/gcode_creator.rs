@@ -212,9 +212,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 self.cnc_router.set_spindle_on(false, self.spindle_speed);
                 for sign in &mut *signs {
                     for shape in sign.shapes() {
-                        if shape.tool_type().raw_value() != tool.tool_type.raw_value() {
-                            continue;
-                        }
                         let mut first_line = true;
                         for line in shape.lines() {
                             if first_line || !line.is_connected() {
@@ -685,7 +682,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
 
         eprintln!("VERY END");
         for rect in fill_rect.get_open_rects() {
-            if rect.3 < 4.0 { continue }
+            // if rect.3 < 4.0 { continue }
             eprintln!("{:?} = {}", rect, (rect.2 - rect.0) * (rect.3 - rect.1));
         }
     }

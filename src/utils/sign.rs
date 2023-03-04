@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use super::*;
+use std::collections::HashMap;
 
 
 #[derive(Debug, Clone)]
@@ -11,8 +12,8 @@ pub struct Sign<T : lines_and_curves::Intersection + Clone> {
 
 #[derive(Debug, Clone)]
 pub struct Shape<T: lines_and_curves::Intersection> {
-    lines: Vec<T>,
     tool_type: cnc_router::ToolType,
+    lines: Vec<T>,
     layers: std::collections::HashMap
         <usize, Vec<(f64, Vec<f64>)>>, // [x_index][x] = [y]
 }
@@ -72,9 +73,12 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         bit_radius: f64,
         do_cut_on_odd: bool
     ) -> Self {
-        let mut shapes : Vec<Shape<T>> = Vec::new();
-
         let mut sign_copy = self.clone();
+
+        let mut groups_of_intersections : HashMap<
+            cnc_router::ToolType,
+            Vec<Vec<Box<T>>>
+        > = HashMap::new();
 
         for shape in &self.shapes {
             let mut lines : Vec<&T> = Vec::new();
@@ -86,11 +90,34 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
                     &lines, bit_radius, Box::from(|x, y| {
                     (sign_copy.y_values_before(x, y) % 2 == 1) == do_cut_on_odd
                 }));
-            let new_lines : Vec<T> =
-                new_lines.iter().map(|x| *x.clone()).collect();
-            let len = new_lines.len();
-            shapes.push(Shape::from(shape.tool_type, new_lines));
-            eprintln!("{} -> {}", lines.len(), len);
+
+            if let Some(mut_v) = groups_of_intersections.get_mut(&shape.tool_type) {
+                mut_v.push(new_lines);
+            } else {
+                groups_of_intersections.insert(shape.tool_type, vec![
+                    new_lines
+                ]);
+            }
+        }
+
+        let mut shapes : Vec<Shape<T>> = Vec::new();
+        for (tool_type, groups) in groups_of_intersections {
+            let mut new_group : Vec<Shape<T>> = lines_and_curves::Intersection::remove_touching_shapes(
+                &groups
+            )
+                .iter()
+                .map(|shape : &Vec<Box<T>>| {
+                    let items: Vec<T> = shape
+                        .iter().map(|x : &Box<T>| {
+                            *(*x).clone()
+                        }).collect();
+                    Shape::from(
+                        tool_type,
+                        items
+                    )
+                }).collect();
+
+            shapes.append(&mut new_group);
         }
 
         return Self::from(
@@ -200,14 +227,10 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
         lines: Vec<T>,
     ) -> Self {
         Self {
+            tool_type: tool_type,
             lines: lines,
             layers: std::collections::HashMap::new(),
-            tool_type: tool_type,
         }
-    }
-
-    pub fn tool_type(&self) -> cnc_router::ToolType {
-        self.tool_type
     }
 
     pub fn bounding_box(&self) -> Option<lines_and_curves::Rectangle> {

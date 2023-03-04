@@ -34,7 +34,7 @@ pub struct CNCRouter<T: std::io::Write> {
     exact_stop_change_y: bool,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum ToolType {
     PartialCutBroad,
     FullCutBroad,
