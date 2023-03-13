@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+// #![allow(dead_code)]
 use super::*;
 
 static ERROR_MSG_COULD_NOT_WRITE: &str = "Could not write in cnc_router.";
@@ -411,10 +411,14 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.go_home();
         self.write_gcode_str("");
         self.write_gcode_string(
-            // format!("M06{}", self.verbose_string(String::from(" (Tool change. Not yet implemented.)")))
+            format!(
+                "({})",
+                self.tools[tool_index].name,
+            )
+        );
+        self.write_gcode_string(
             format!("T{} M6{}", self.tools[tool_index].index_in_machine,
                 self.verbose_string(String::from(" (Tool change.)")))
-                // self.verbose_string(String::from(" (Tool change. Not yet implemented.)")))
         );
         self.set_accuracy_control(self.tools[tool_index].smoothness);
         self.set_tool_offset_positive(
@@ -1269,6 +1273,14 @@ impl Tool {
         } else {
             false
         }
+    }
+
+    pub fn is_text_or_braille(&self) -> bool {
+        self.is_text() || self.is_braille()
+    }
+
+    pub fn tool_type(&self) -> ToolType {
+        self.tool_type
     }
 }
 

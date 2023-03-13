@@ -102,6 +102,7 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
 
         let mut shapes : Vec<Shape<T>> = Vec::new();
         for (tool_type, groups) in groups_of_intersections {
+            // let mut new_group = groups
             let mut new_group : Vec<Shape<T>> = lines_and_curves::Intersection::remove_touching_shapes(
                 &groups
             )
@@ -235,6 +236,10 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
 
     pub fn bounding_box(&self) -> Option<lines_and_curves::Rectangle> {
         lines_and_curves::bounding_box(&self.lines)
+    }
+
+    pub fn tool_type(&self) -> cnc_router::ToolType {
+        self.tool_type
     }
 
     pub fn lines(&self) -> &Vec<T> {

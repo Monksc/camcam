@@ -1023,19 +1023,11 @@ impl LineSegment {
                 seen2 += LineSegment::y_before(poly, p2.x, p2.y) % 2;
             }
 
-            eprintln!("\tP1: {:?} seen {}, P2: {:?} seen {}", p1, seen1, p2, seen2);
-            eprintln!(
-                "\t\t{:?}\n\t\t{:?}\n\t\t{:?}",
-                lines[i].p1,
-                lines[(i+1)%lines.len()].p1,
-                lines[(i+2)%lines.len()].p1
-            );
             // Keep polygons with real borders
             if (seen1 > 0) == (seen2 > 0) {
                 return false;
             }
         }
-        eprintln!("\tMADE IT");
         return true;
     }
 
@@ -1059,19 +1051,11 @@ impl LineSegment {
                 seen2 += LineSegment::y_before(poly, p2.x, p2.y) % 2;
             }
 
-            eprintln!("\tP1: {:?} seen {}, P2: {:?} seen {}", p1, seen1, p2, seen2);
-            eprintln!(
-                "\t\t{:?}\n\t\t{:?}\n\t\t{:?}",
-                lines[i].p1,
-                lines[(i+1)%lines.len()].p1,
-                lines[(i+2)%lines.len()].p1
-            );
             // Keep polygons with real borders
             if (seen1 > 0) == (seen2 > 0) {
                 return false;
             }
         }
-        eprintln!("\tMADE IT");
         return true;
     }
 
@@ -1087,24 +1071,6 @@ impl LineSegment {
         points_graph: &Vec<(Point, Vec<usize>)>,
         valid_points: &Vec<usize>
     ) -> Vec<Vec<usize>> {
-
-        eprintln!("GRAPH:");
-        for i in 0..points_graph.len() {
-            eprintln!("\t{}) {:?}", i, points_graph[i]);
-        }
-
-        eprintln!("PyPlot Code:");
-        for i in 0..points_graph.len() {
-            for j in &points_graph[i].1 {
-                eprintln!(
-                    "\tplt.plot([{}, {}], [{}, {}])",
-                    points_graph[i].0.x,
-                    points_graph[*j].0.x,
-                    points_graph[i].0.y,
-                    points_graph[*j].0.y,
-                );
-            }
-        }
 
         let mut seen = Vec::new();
         for _ in 0..points_graph.len() {
@@ -1148,7 +1114,7 @@ impl LineSegment {
 
         let mut polygons = Vec::new();
 
-        loop {
+        'mainloop: loop {
             let mut next_point = 0; // seen[][_]
             'outerwhile: while sorted_points_first_non_used_index < sorted_points.len() {
                 for i in
@@ -1195,19 +1161,11 @@ impl LineSegment {
                 let current_point = points_graph[current_point_index].0;
 
                 let mut longest_angle = None;
-                eprintln!("New Poly: {:?}", new_polygon_points);
                 for i in 0..points_graph[current_point_index].1.len() {
                     let next_index = points_graph[current_point_index].1[i];
                     if seen[current_point_index][next_index] >= 2 { continue; }
                     let next_point = points_graph[next_index].0;
                     let angle = Point::right_angle(&prev_point, &current_point, &next_point);
-                    eprintln!(
-                        "ANGLE: {} {} {} -> {}",
-                        prev_index,
-                        current_point_index,
-                        next_index,
-                        angle
-                    );
                     longest_angle = if let Some((la, li)) = longest_angle {
 
                         // first polygon we want the least angle
@@ -1231,8 +1189,12 @@ impl LineSegment {
                 let longest_angle_index = if let Some(l) = longest_angle {
                     l.1
                 } else {
-                    panic!("Should have had another option.");
-                    prev_index
+                    // panic!("Should have had another option.");
+                    eprintln!("Should have had another option. Trying to remove line. E0767");
+                    seen[prev_index][current_point_index] = 2;
+                    seen[current_point_index][prev_index] = 2;
+                    continue 'mainloop;
+                    // prev_index
                 };
 
                 new_polygon_points.push(longest_angle_index);
@@ -1257,7 +1219,6 @@ impl LineSegment {
                     seen[next_point][point] += 1;
                 }
             }
-            eprintln!("FINISHED POLY: {:?}", new_polygon_points);
             polygons.push(new_polygon_points_only_cycle);
         }
 
@@ -1289,7 +1250,6 @@ impl LineSegment {
                 }
             }
         }
-        println!("HERERERE LEN: {}", seen_polygons.len());
         return filtered_poly;
     }
 
@@ -1298,7 +1258,6 @@ impl LineSegment {
     ) -> Vec<Vec<(Self, usize)>> {
         let mut polygons = Vec::new();
 
-        eprintln!("line_segments_to_polygons lines len() = {}", lines.len());
         let graph_points_to_points_with_line_indexes =
             LineSegment::all_intersections_combine_points(&lines, 1000.0);
         let graph_points_to_points : Vec<(Point, Vec<usize>)> =
@@ -1321,35 +1280,18 @@ impl LineSegment {
                     return new_connections;
                 }
             ).collect();
-        eprintln!("graph_points_to_points: {:?}", graph_points_to_points);
         let strict_map : Vec<Vec<usize>> = graph_points_to_points.iter().map(
             |x| x.1.clone()
         ).collect();
         let scc = algorithms::get_scc_graph_vec_indexes(
             &strict_map
         );
-        eprintln!("SCC Created");
 
         // Combine each component together
         for component in scc {
-            eprintln!("Start get polygons COMPONENT {:?}", component);
             let new_polygons = LineSegment::find_all_polygons(&graph_points_to_points, &component);
-            eprintln!("COMPONENT {:?} NEW POLY: {:?}", component, new_polygons);
 
-            let mut remove_later = -0.02;
             for new_poly in new_polygons {
-
-                eprintln!(
-                    "plt.plot({:?}, {:?})",
-                    new_poly.iter().map(
-                        |index| graph_points_to_points[*index].0.x + remove_later,
-                    ).collect::<Vec<f64>>(),
-                    new_poly.iter().map(
-                        |index| graph_points_to_points[*index].0.y + remove_later
-                    ).collect::<Vec<f64>>(),
-                );
-                remove_later += 0.01;
-
                 let mut lines = Vec::new();
                 for i in 1..new_poly.len() {
                     lines.push((
@@ -1379,10 +1321,6 @@ impl LineSegment {
             }
         }
 
-        eprintln!(
-            "get_outlines_and_inlines_of_touching_polygons LEN: {} POLGYGONS LEN : {}",
-            lines.len(), shapes.len()
-        );
         let polygons : Vec<Vec<Self>> = Self::line_segments_to_polygons(&lines)
             .iter()
             .filter(|polygon| {
@@ -1415,7 +1353,6 @@ impl LineSegment {
                     }
                 }
 
-                eprintln!("Find Real Borders");
                 return Self::is_real_border_line_based(&polygon_straight_lines, &borders);
 
             })
@@ -1424,7 +1361,6 @@ impl LineSegment {
                     |line| line.0.clone()
                 ).collect()
             ).collect();
-        eprintln!("LINES FILTER TO LEN: {}", polygons.len());
 
         return polygons;
     }
@@ -1454,10 +1390,10 @@ impl LineSegment {
                     if ip2 {
                         intersections.push((lines[i].p2, i, j));
                     }
-                    if jp1 {
+                    if jp1 && lines[j].p1 != lines[i].p1 && lines[j].p1 != lines[i].p2 {
                         intersections.push((lines[j].p1, i, j));
                     }
-                    if jp2 {
+                    if jp2 && lines[j].p2 != lines[i].p1 && lines[j].p2 != lines[i].p2 {
                         intersections.push((lines[j].p2, i, j));
                     }
 
@@ -1522,7 +1458,6 @@ impl LineSegment {
 
         while let Some(Reverse(top)) = q.pop() {
 
-            println!("POINT: {:?}", top);
             let check_node = AllIntersectionsTreeNode{
                 line: &LineSegment::from(
                     top.point,
@@ -1571,13 +1506,6 @@ impl LineSegment {
                 }
             }
 
-            println!(
-                "Upper: {:?}\nInterior: {:?}\nBottom: {:?}",
-                upper_end_point_is_top,
-                interior_end_point_is_top,
-                lower_end_point_is_top
-            );
-
             // report intersections
 
             let mut all_intersections = upper_end_point_is_top.clone();
@@ -1621,28 +1549,22 @@ impl LineSegment {
 
             if lower_end_point_is_top.len() + interior_end_point_is_top.len() == 0 {
                 // find new events between left line and right line of point p
-                println!("HERE : {:?}", check_node);
                 let Some(right) = status_structure.range((
                     Excluded(&check_node),
                     Unbounded,
                 )).next() else {
                     continue;
                 };
-                println!("Right");
                 let Some(left) = status_structure.range((
                     Unbounded,
                     Excluded(&check_node),
                 )).last() else {
                     continue;
                 };
-                println!("Left");
-
-                println!("Test intersection");
 
                 let Some(point) = right.line.point_of_interception(&left.line) else {
                     continue;
                 };
-                println!("NEW _POINT : {:?}", point);
 
                 q.push(Reverse(AllIntersectionsQueueItemBook{
                     point: point,
@@ -1715,15 +1637,6 @@ impl LineSegment {
     pub fn all_intersections_my_version(lines: &Vec<Self>) -> Vec<(Point, usize, usize)> {
 
         use core::cmp::Reverse;
-
-        eprintln!("LINES:");
-        for line in lines {
-            eprintln!(
-                "\tLineSegment {{\n\t\tp1: {:?},\n\t\tp2: {:?},\n\t\t{}\n\t}},",
-                line.p1, line.p2,
-                "includes_first_point: true, includes_second_point: false,",
-            );
-        }
 
         let lines : Vec<Self> = lines.iter().map(|line| {
             LineSegment::from_include(line.p1, line.p2, true, true)
@@ -1798,12 +1711,6 @@ impl LineSegment {
                 assert!(compare != std::cmp::Ordering::Greater);
             }
 
-            eprintln!("TOP: {:?}", top);
-            eprintln!("Status Structure");
-            for status in &status_structure {
-                eprintln!("\t{:?}", status.index);
-            }
-
             let line_index = top.line_segment_index;
             let value = AllIntersectionsTreeNode{
                 line: &lines[line_index],
@@ -1820,14 +1727,9 @@ impl LineSegment {
                 AllIntersectionsQueueItemPointType::Middle => {
                 },
                 AllIntersectionsQueueItemPointType::Bottom => {
-                    eprintln!("Status Structure");
                     let mut value_copy = value.clone();
                     value_copy.latest_x = last_x[value_copy.index];
                     value_copy.latest_y = last_y[value_copy.index];
-                    for status in &status_structure {
-                        eprintln!("\t{:?}", status);
-                    }
-                    eprintln!("\t{:?}", value_copy);
                     assert!(status_structure.remove(&value_copy));
                 },
             }
@@ -1861,11 +1763,9 @@ impl LineSegment {
                 }
 
                 for next in range {
-                    eprintln!("Compare line {} - {}", value.index, next.index);
                     if let Some(p) = value.line.point_of_interception(
                         &next.line
                     ) {
-                        eprintln!("Found Point {:?}", p);
                         let (less_index, higher_index) = if value.index < next.index {
                             (value.index, next.index)
                         } else {
@@ -1898,26 +1798,14 @@ impl LineSegment {
                 }
             }
             let status_structure_len = status_structure.len();
-            eprintln!("-----------------------");
             for mut value in &mut values_to_remove_and_insert {
-                eprintln!("Status Structure");
                 value.latest_x = last_x[value.index];
                 value.latest_y = last_y[value.index];
-                for status in &status_structure {
-                    let result = Ord::cmp(value, status);
-                    eprintln!(
-                        "\t{} {:?}\t\t({:?}, {:?})\t\t{} {}",
-                        status.index, result, status.line.p1, status.line.p2,
-                        status.latest_x, status.latest_y,
-                    );
-                }
-                eprintln!("\tValue: {:?}", value);
                 assert!(status_structure.remove(&value));
             }
             for mut value in values_to_remove_and_insert {
                 value.latest_x = top.point.x;
                 value.latest_y = top.point.y;
-                eprintln!("Swapped {:?}", value);
                 status_structure.insert(value);
             }
             assert_eq!(status_structure.len(), status_structure_len);
@@ -1937,20 +1825,7 @@ impl LineSegment {
 
     pub fn all_intersections_combine_points(lines: &Vec<Self>, squares_in_one: f64)
         -> Vec<(Point, Vec<(usize, usize)>)> {
-        eprintln!("all_intersections_combine_points begin Lines len: {}", lines.len());
         let intersections = LineSegment::all_intersections(&lines);
-        eprintln!("Intersections:");
-        let mut xs = Vec::new();
-        let mut ys = Vec::new();
-        for (p, i, j) in &intersections {
-            eprintln!("\t{:?} {} {}", p, i, j);
-            xs.push(p.x);
-            ys.push(p.y);
-        }
-        eprintln!(
-            "\tplt.plot({:?}, {:?})",
-            xs, ys,
-        );
 
         let mut point_to_index = std::collections::HashMap::<(usize, usize), usize>::new();
         // The graph. [point_index] = (Point, Set<next point index, line index>)
@@ -1974,7 +1849,6 @@ impl LineSegment {
                 point_indexes.len()-1
             };
 
-            baslls
             line_to_points[intersections[i].1].push((intersections[i].0, index));
             line_to_points[intersections[i].2].push((intersections[i].0, index));
         }
@@ -2021,6 +1895,7 @@ impl LineSegment {
 
     pub fn remove_inner_intersecting_polygons(lines: &Vec<Self>) -> Vec<Self> {
         let graph = LineSegment::all_intersections_combine_points(&lines, 1000.0);
+        Self::print_python_code_to_graph(lines);
 
         let mut current_index = 0;
         for i in 1..graph.len() {
@@ -2038,7 +1913,8 @@ impl LineSegment {
         points.push(current_index);
 
         let mut next_vertex_tuple = None;
-        for i in 0..graph.len() {
+        for i in &graph[current_index].1 {
+            let i = i.0;
             if i == current_index {
                 continue;
             }
@@ -2052,30 +1928,59 @@ impl LineSegment {
                 next_vertex_tuple = Some((angle, i));
             }
         }
+        let Some(next_vertex) = next_vertex_tuple else {
+            return Vec::new();
+        };
+        points.push(next_vertex.1);
+
         while points[0] != points[points.len()-1] {
             let p1 = points[points.len()-2];
             let p2 = points[points.len()-1];
 
             let mut next_tuple = None;
             for p3 in &graph[p2].1 {
+                if p3.0 == p1 { continue; }
+
                 let angle = Point::right_angle(
                     &graph[p1].0,
                     &graph[p2].0,
-                    &graph[p3].0,
+                    &graph[p3.0].0,
                 );
+
+                if let Some((next_angle, _)) = next_tuple {
+                    if angle < next_angle {
+                        next_tuple = Some((angle, p3.0));
+                    }
+                } else {
+                    next_tuple = Some((angle, p3.0));
+                }
             }
+            let Some(next_tuple) = next_tuple else {
+                eprintln!("POINTS: {:?}", points);
+                panic!("Should have found another point.");
+            };
+
+            points.push(next_tuple.1);
+        }
+
+        let mut r = Vec::new();
+        for i in 1..points.len() {
+            r.push(LineSegment::from_ray(
+                graph[points[i-1]].0,
+                graph[points[i  ]].0,
+            ));
         }
 
         return r;
     }
 
     pub fn print_python_code_to_graph(lines: &Vec<Self>) {
-        println!("import matplotlib.pyplot as plt\n");
-        for line in lines {
-            println!("plt.plot([{}, {}], [{}, {}])",
-                line.p1.x, line.p2.x, line.p1.y, line.p2.y);
-        }
-        println!("\nplt.show()");
+        // println!("import matplotlib.pyplot as plt\n");
+        // for line in lines {
+        //     println!("plt.plot([{}, {}], [{}, {}])",
+        //         line.p1.x, line.p2.x, line.p1.y, line.p2.y);
+        // }
+        // println!("\nplt.show()");
     }
 }
 
@@ -2253,21 +2158,21 @@ impl Intersection for LineSegment {
 
             if let Some(intersect_point) =
                 line_ij.point_of_interception_endless_lines(&line_jk) {
-                eprintln!(
-                    "Line IJ: {:?}\nLine JK: {:?}\nIntersection {:?}",
-                    line_ij, line_jk, intersect_point
-                );
                 // assert!(
                 //     bit_radius < 0.001 ||
                 //     can_cut(intersect_point.x, intersect_point.y)
                 // );
 
                 // NOTE: Maybe should remove if
-                if bit_radius == 0.0 ||
-                    can_cut(intersect_point.x, intersect_point.y)
-                {
-                    new_points.push(intersect_point);
-                }
+                // if bit_radius == 0.0 ||
+                //     (
+                //         can_cut(intersect_point.x, intersect_point.y) &&
+                //         (ij_dx.powi(2) + ij_dy.powi(2) > 0.0) && (jk_dx.powi(2) + jk_dy.powi(2) > 0.0)
+                //     )
+                // {
+                //     // new_points.push(intersect_point);
+                // }
+                new_points.push(intersect_point);
             } else {
                 // return Vec::new();
                 // try for something
@@ -2280,9 +2185,14 @@ impl Intersection for LineSegment {
         let mut lines = Vec::new();
         for i in 0..new_points.len() {
             let j = (i+1) % new_points.len();
-            lines.push(Box::from(
-                LineSegment::from_ray(new_points[i], new_points[j])));
+            lines.push(LineSegment::from_ray(new_points[i], new_points[j]));
         }
+        let line_count = lines.len();
+        let lines = Self::remove_inner_intersecting_polygons(&lines);
+        let lines : Vec<Box<Self>> = lines.iter().map(|line| {
+            Box::from(line.clone())
+        }).collect();
+
         return lines;
     }
 
@@ -2298,7 +2208,6 @@ impl Intersection for LineSegment {
                     |line| (*(*line)).clone()
                 ).collect()
             ).collect();
-        eprintln!("START: {:?}", shapes);
         let polygons = Self::get_outlines_and_inlines_of_touching_polygons(&shapes);
         let polygons_box : Vec<Vec<Box<Self>>> = polygons.iter()
             .map(
@@ -2306,188 +2215,8 @@ impl Intersection for LineSegment {
                     |line| Box::from(line.clone())
                 ).collect()
             ).collect();
-        eprintln!("POLYGONS: {} {}", polygons.len(), polygons_box.len());
-        for poly in &polygons_box {
-            eprintln!("\tPOLY:");
-            for line in poly {
-                eprintln!("\t\t{:?} {:?}", line.p1, line.p2);
-            }
-        }
 
         return polygons_box;
-
-        /*
-
-        let mut bounding_boxes = Vec::new();
-        let mut did_change = false;
-        for shape in shapes {
-            let Some(first) = shape.first() else {
-                // TODO: Add in another way to look at this error
-                bounding_boxes.push(Rectangle::zero());
-                continue
-            };
-
-            let mut min_x = first.p1.x;
-            let mut max_x = first.p1.x;
-
-            let mut min_y = first.p1.y;
-            let mut max_y = first.p1.y;
-
-            for line in shape {
-                if line.p1.x < min_x {
-                    min_x = line.p1.x;
-                }
-                if line.p1.x > max_x {
-                    max_x = line.p1.x;
-                }
-
-                if line.p1.y < min_y {
-                    min_y = line.p1.y;
-                }
-                if line.p1.y > max_y {
-                    max_y = line.p1.y;
-                }
-            }
-
-            bounding_boxes.push(Rectangle::from(
-                Point::from(min_x, min_y),
-                Point::from(max_x, max_y),
-            ));
-        }
-
-        let mut new_shapes = Vec::new();
-        let mut deleted_shapes = std::collections::HashSet::new();
-
-        for i in 0..shapes.len() {
-            if deleted_shapes.contains(&i) { continue; }
-            let mut shape = shapes[i].clone();
-            for j in i..shapes.len() {
-                if !bounding_boxes[i].intersects_rectangle(&bounding_boxes[j]) {
-                    continue;
-                }
-
-                let mut points = Vec::new();
-                let mut index = 0;
-                while index < shapes[i].len() &&
-                    Intersection::lines_below_point(&shapes[j], shapes[i][index].p1) % 2 == 1 {
-                    index += 1;
-                }
-                index = index % shapes[i].len();
-
-                // what if O. Should then just cut anywhere as there is no intersections
-                // we cut at shapes[i][index]
-
-                let mut is_on_i = true;
-                let mut direction : i64 = 1;
-                points.push(shapes[i][index].p1);
-                'outer: while (points.len() < 2 || points[0] != points[points.len()-1])
-                    && points.len() < 90 {
-                    let (index_cut, index_not_cut) = if is_on_i {
-                        (i, j)
-                    } else {
-                        (j, i)
-                    };
-
-                    // check for intersection
-                    //      switch and go correct way
-                    for m in 0..shapes[index_not_cut].len() {
-                        if let Some(point) = shapes[index_cut][index].point_of_interception(
-                            &(*shapes[index_not_cut][m])
-                        ) {
-                            if i != j {
-                                did_change = true;
-                            }
-                            points.push(point);
-                            // index = m;
-                            if Intersection::lines_below_point(
-                                &shapes[index_cut], shapes[index_not_cut][m].p2
-                            ) % 2 == 0 {
-                                index = (shapes[index_not_cut].len() + m + 0)
-                                    % shapes[index_not_cut].len();
-                                direction = 1;
-                            } else {
-                                index = (shapes[index_not_cut].len() + m - 1) %
-                                    shapes[index_not_cut].len();
-                                direction = -1;
-                            }
-
-                            is_on_i = !is_on_i;
-                            deleted_shapes.insert(j);
-
-                            points.push(shapes[index_not_cut][index].p2);
-                            index += shapes[index_not_cut].len() +
-                                (shapes[index_not_cut].len() as i64 + direction) as usize;
-                            index = index % shapes[index_not_cut].len();
-
-                            continue 'outer;
-                            // break;
-                        }
-                    }
-
-                    // else add point and go direction
-                    points.push(shapes[index_cut][index].p2);
-                    index += shapes[index_cut].len() +
-                        (shapes[index_cut].len() as i64 + direction) as usize;
-                    index = index % shapes[index_cut].len();
-                }
-
-                shape = Vec::new();
-                for m in 0..points.len() {
-                    let n = (m+1) % points.len();
-                    shape.push(Box::from(LineSegment::from(points[m], points[n])));
-                }
-
-                /*
-                let mut intersecting_lines = Vec::new();
-                for k in 0..shapes[i].len() {
-                    if !shapes[i][k].intersects_rectangle(&bounding_boxes[j]) {
-                        continue;
-                    }
-                    for l in 0..shapes[j].len() {
-                        if shapes[i][k].intersects_line(&(*shapes[j][l])) {
-                            intersecting_lines.push((k, l));
-                        }
-                    }
-                }
-
-                for (i_index, j_index) in &intersecting_lines {
-                    eprintln!(
-                        "PIZZA: I: {} J: {}\n\t{:?}\n\t{:?}",
-                        *i_index, *j_index,
-                        shapes[i][*i_index], shapes[j][*j_index]
-                    );
-                }
-
-                if intersecting_lines.len() > 1 {
-                    let mut new_points = Vec::new();
-                    let mut current_index = intersecting_lines[0].0;
-                    let mut intersecting_lines_index = 0;
-
-                    while new_points.len() < 2 ||
-                        new_points[0] != new_points[new_points.len()-1] {
-
-                        let next_shape
-                    }
-
-                    // shape = new_shapes;
-                }
-
-                // combine shapes
-                // if i != j
-                */
-            }
-            new_shapes.push(shape);
-        }
-
-        // return shapes.iter().map(|x| {
-        //     x.clone()
-        // }).collect();
-
-        if did_change {
-            // return Intersection::remove_touching_shapes(&new_shapes);
-        }
-        return new_shapes;
-        */
     }
 }
 
