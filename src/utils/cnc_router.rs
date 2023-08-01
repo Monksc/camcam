@@ -36,27 +36,72 @@ pub struct CNCRouter<T: std::io::Write> {
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum ToolType {
-    PartialCutBroad,
     FullCutBroad,
-    Text,
-    Braille
+    PartialCutBroad,
+    SpaceBetweenCutBroad,
+    DontAddCutBroad,
+    FullCutText,
+    PartialCutText,
+    Braille,
 }
 impl ToolType {
     pub fn description(&self) -> String {
         match self {
-            ToolType::PartialCutBroad => String::from("Partial Cut Broad"),
             ToolType::FullCutBroad => String::from("Full Cut Broad"),
-            ToolType::Text => String::from("Text"),
+            ToolType::PartialCutBroad => String::from("Partial Cut Broad"),
+            ToolType::SpaceBetweenCutBroad => String::from("Space Between Cut Broad"),
+            ToolType::DontAddCutBroad => String::from("Don't Add Cut Broad"),
+            ToolType::FullCutText => String::from("Full Cut Text"),
+            ToolType::PartialCutText => String::from("Partial Cut Text"),
             ToolType::Braille => String::from("Braille"),
         }
     }
     pub fn raw_value(&self) -> u32 {
         match self {
-            ToolType::PartialCutBroad => 0,
-            ToolType::FullCutBroad => 1,
-            ToolType::Text => 2,
-            ToolType::Braille => 3,
+            ToolType::FullCutBroad => 0,
+            ToolType::PartialCutBroad => 1,
+            ToolType::SpaceBetweenCutBroad => 2,
+            ToolType::DontAddCutBroad => 3,
+            ToolType::FullCutText => 4,
+            ToolType::PartialCutText => 5,
+            ToolType::Braille => 6,
         }
+    }
+    pub fn full_cut(self) -> bool {
+        self == ToolType::FullCutBroad ||
+            self == ToolType::FullCutText ||
+            self == ToolType::Braille ||
+            self == ToolType::SpaceBetweenCutBroad
+    }
+
+    pub fn dont_add_cut(self) -> bool {
+        self == ToolType::DontAddCutBroad
+    }
+
+    pub fn is_text(self) -> bool {
+        ToolType::FullCutText == self ||
+        ToolType::PartialCutText == self
+    }
+
+    pub fn is_braille(self) -> bool {
+        ToolType::Braille == self
+    }
+
+    pub fn is_broad(self) -> bool {
+        ToolType::FullCutBroad == self ||
+        ToolType::PartialCutBroad == self ||
+        ToolType::SpaceBetweenCutBroad == self ||
+        ToolType::DontAddCutBroad == self
+    }
+
+    pub fn is_same_type(&self, other: &ToolType) -> bool {
+        (self.is_text() && other.is_text()) ||
+        (self.is_braille() && other.is_braille()) ||
+        (self.is_broad() && other.is_broad())
+    }
+
+    pub fn is_text_or_braille(&self) -> bool {
+        self.is_text() || self.is_braille()
     }
 }
 
@@ -184,7 +229,6 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.set_exact_stop_on_y_change(true);
         self.write_gcode_command("G54", self.verbose_str(" (Change 0 coordinate)"));
         self.go_home();
-        self.turn_fan(true);
     }
 
     pub fn get_pos(&self) -> Coordinate {
@@ -292,6 +336,19 @@ impl <T: std::io::Write> CNCRouter<T> {
         &self.gcode_write
     }
 
+    pub fn run_subprogram(&mut self, program: &str) {
+        self.write_gcode_command(
+            "M98",
+            format!(
+                "P{}{}",
+                program,
+                self.verbose_string(
+                    String::from(" ( TOOL MSR )")
+                )
+            )
+        )
+    }
+
     pub fn program_stop(&mut self) {
         let verbose = self.verbose_string(String::from("( Program Stop )"));
         self.write_gcode_command(
@@ -315,8 +372,7 @@ impl <T: std::io::Write> CNCRouter<T> {
     }
 
     pub fn reset_program_and_end(&mut self) {
-        self.set_spindle_off();
-        self.turn_fan(false);
+        // self.set_spindle_off();
         self.go_home();
         // self.program_stop();
         // self.end_program();
@@ -835,8 +891,10 @@ impl <T: std::io::Write> CNCRouter<T> {
         )
     }
 
-    pub fn set_tool_offset_positive(&mut self, tool_index: usize,
-        _offset_value: f64, _feed_rate: f64) {
+    pub fn set_tool_offset_positive(
+        &mut self, tool_index: usize,
+        _offset_value: f64, _feed_rate: f64,
+    ) {
         self.write_gcode_command(
             "G43",
             format!("H{} {}",
@@ -1249,36 +1307,6 @@ impl Tool {
         }
     }
 
-    pub fn is_broad(&self) -> bool {
-        if let ToolType::PartialCutBroad = self.tool_type {
-            true
-        } else if let ToolType::FullCutBroad = self.tool_type {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn is_text(&self) -> bool {
-        if let ToolType::Text = self.tool_type {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn is_braille(&self) -> bool {
-        if let ToolType::Braille = self.tool_type {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn is_text_or_braille(&self) -> bool {
-        self.is_text() || self.is_braille()
-    }
-
     pub fn tool_type(&self) -> ToolType {
         self.tool_type
     }
@@ -1608,6 +1636,7 @@ pub trait CNCPath {
         feed_rate_of_drill: f64, // only in effect iff force_drill
         z_axis_of_cut: f64, // only in effect iff force_drill
         depth_of_cut: f64, // only in effect iff force_drill
+        only_cleanup: bool,
     ) -> bool {
         let points = CNCPath::to_path_vec(items);
 
@@ -1641,7 +1670,8 @@ pub trait CNCPath {
                 );
 
                 let distance = line.distance_to_point(&lines_and_curves::Point::from(
-                    start_pos.x, start_pos.y
+                    start_pos.x,
+                    start_pos.y
                 ));
                 if distance < closest_distance {
                     closest_distance = distance;
@@ -1649,27 +1679,72 @@ pub trait CNCPath {
                 }
             }
 
-            let starting_point = cnc_router.get_pos();
-            for h in 0..new_points.len() {
+            let mut higher_distance = 0.0;
+            'findhigherindex: for h in 0..new_points.len() {
                 let i = (h+start_index) % new_points.len();
                 let j = (h+start_index+1) % new_points.len();
-                // if x in the middle of [new_points[i].x, new_points[j].x]
 
-                let x_values = [x, starting_point.x];
+                let x_values = [x, start_pos.x];
+                for z in 0..(if h == 0 { 1 } else { 2 }) {
+                    let x = x_values[z];
+                    if (x > new_points[j].x && new_points[i].x > x) ||
+                        (x < new_points[j].x && new_points[i].x < x)
+                    {
+                        break 'findhigherindex;
+                    }
+                }
+                higher_distance += new_points[i].distance_to(&new_points[j]);
+            }
+
+            let mut lower_distance = 0.0;
+            'findlowerindex: for h in 0..new_points.len() {
+                let i = (3*new_points.len()-h+start_index+1) % new_points.len();
+                let j = (3*new_points.len()-h+start_index) % new_points.len();
+
+                let x_values = [x, start_pos.x];
+                for z in 0..(if h == 0 { 1 } else { 2 }) {
+                    let x = x_values[z];
+                    if (x > new_points[j].x && new_points[i].x > x) ||
+                        (x < new_points[j].x && new_points[i].x < x)
+                    {
+                        break 'findlowerindex;
+                    }
+                }
+                lower_distance += new_points[i].distance_to(&new_points[j]);
+            }
+
+            // let higher_diff = if higher_closer_index >= start_index {
+            //     higher_closer_index - start_index
+            // } else {
+            //     new_points.len() - start_index + higher_closer_index
+            // };
+
+            // let lower_diff = if lower_closer_index <= start_index {
+            //     start_index - lower_closer_index
+            // } else {
+            //     new_points.len() + start_index - lower_closer_index
+            // };
+
+            let should_go_higher = higher_distance <= lower_distance;
+
+            for h in 0..new_points.len() {
+                let (new_h, addition) = if should_go_higher {
+                    (h, 1)
+                } else {
+                    (1+new_points.len()-h, new_points.len()-1)
+                };
+                let i = (new_h+start_index) % new_points.len();
+                let j = (new_h+start_index+addition) % new_points.len();
+
+                let x_values = [x, start_pos.x];
                 for z in 0..(if h == 0 { 1 } else { 2 }) {
                     let x = x_values[z];
                     if (x > new_points[j].x && new_points[i].x > x) ||
                         (x < new_points[j].x && new_points[i].x < x)
                     {
                         let line = lines_and_curves::LineSegment::from(
-                            lines_and_curves::Point::from(
-                                new_points[i].x,
-                                new_points[i].y,
-                            ),
-                            lines_and_curves::Point::from(
-                                new_points[j].x,
-                                new_points[j].y,
-                            ),
+                            new_points[i],
+                            new_points[j]
                         );
 
                         cnc_router.move_to_optional_coordinate(
@@ -1683,6 +1758,7 @@ pub trait CNCPath {
                         return true;
                     }
                 }
+                // let index = if should_go_higher { j } else { i };
                 cnc_router.move_to_optional_coordinate(
                     &OptionalCoordinate::from(
                         Some(new_points[j].x),
@@ -1692,8 +1768,68 @@ pub trait CNCPath {
                     feed_rate, false,
                 );
             }
-        } if let Some(y) = y {
+        } else if let Some(y) = y {
 
+        } else if only_cleanup {
+            let mut is_up = true;
+            for i in 0..new_points.len() {
+                let j = (i+1) % new_points.len();
+                let k = (i+2) % new_points.len();
+
+                let angle = lines_and_curves::Point::right_angle(
+                    &new_points[i],
+                    &new_points[j],
+                    &new_points[k],
+                );
+                if angle >= std::f64::consts::PI {
+                    if !is_up {
+                        cnc_router.move_to_optional_coordinate(
+                            &cnc_router::OptionalCoordinate::from_z(
+                                Some(z_axis_of_cut)
+                            ),
+                            Some(feed_rate_of_drill), false,
+                        );
+                        is_up = true;
+                    }
+                    continue;
+                }
+
+                let mid_ij = (new_points[i] + new_points[j]) / 2.0;
+                let mid_jk = (new_points[j] + new_points[k]) / 2.0;
+
+                if is_up {
+                    cnc_router.move_to_coordinate_rapid(
+                        &cnc_router::Coordinate::from(
+                            mid_ij.x, mid_ij.y, z_axis_of_cut
+                        )
+                    );
+
+                    cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(z_axis_of_cut + depth_of_cut)
+                        ),
+                        Some(feed_rate_of_drill), false,
+                    );
+                    is_up = false;
+                }
+
+                cnc_router.move_to_optional_coordinate(
+                    &OptionalCoordinate::from(
+                        Some(new_points[j].x),
+                        Some(new_points[j].y),
+                        None,
+                    ),
+                    feed_rate, false,
+                );
+                cnc_router.move_to_optional_coordinate(
+                    &OptionalCoordinate::from(
+                        Some(mid_jk.x),
+                        Some(mid_jk.y),
+                        None,
+                    ),
+                    feed_rate, false,
+                );
+            }
         } else {
             if force_drill {
                 cnc_router.move_to_coordinate_rapid(
@@ -1709,7 +1845,6 @@ pub trait CNCPath {
                     Some(feed_rate_of_drill), false,
                 );
             }
-
 
             for pos in new_points {
                 cnc_router.move_to_optional_coordinate(
@@ -1731,7 +1866,6 @@ pub trait CNCPath {
                 );
             }
         }
-
         true
     }
 }

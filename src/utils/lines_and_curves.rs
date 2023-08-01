@@ -3,26 +3,46 @@
 use super::*;
 
 pub trait Intersection {
-    fn y(&self, next: &Self, x: f64) -> Vec<f64>;
-    fn y_before<
+    fn y(&self, next: &Self, x: f64) -> Vec<(f64, bool)>;
+    fn is_inside<
         T: Intersection
-    >(intersections: &Vec<T>, x: f64, y: f64) -> usize {
-        let mut count = 0;
+    >(intersections: &Vec<T>, x: f64, y: f64) -> bool {
+        let mut highest_less_y = None;
+        let mut result = false;
         for i in 0..intersections.len() {
-            for y_iter in Intersection::y(
+            for (y_iter, is_inside) in Intersection::y(
                 &intersections[i],
-                &intersections[(i+1)%intersections.len()],
-                x
+                &intersections[(i+1) % intersections.len()],
+                x,
             ) {
                 if y_iter < y {
-                    count += 1;
+                    let (new_y, new_can_cut) = if let Some(high_y) = highest_less_y {
+                        if high_y < y_iter ||
+                            (high_y <= y_iter && !is_inside) {
+                            (y_iter, is_inside)
+                        } else {
+                            (high_y, result)
+                        }
+                    } else {
+                        (y_iter, is_inside)
+                    };
+
+                    highest_less_y = Some(new_y);
+                    result = new_can_cut;
                 }
             }
         }
-        return count;
+        return result;
     }
 
     fn times_cross_line(&self, line: &LineSegment) -> usize;
+    fn times_cross_line_vec(&self, lines: &Vec<LineSegment>) -> usize {
+        let mut count = 0;
+        for line in lines {
+            count += self.times_cross_line(&line);
+        }
+        return count;
+    }
     fn times_cross_border_rect(&self, rect : &Rectangle) -> usize {
         self.times_cross_line(
             &LineSegment::from_ray(
@@ -59,27 +79,33 @@ pub trait Intersection {
     // Used a bit_radius on a cnc router
     // make a new path with intersections farther away from not cut zone by radius
     fn add_radius(
-        items: &Vec<&Self>,
+        items: &Vec<Self>,
         radius: f64,
-        can_cut: Box<impl FnMut(f64, f64) -> bool>,
-    ) -> Vec<Box<Self>>;
+        cut_inside: bool,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized;
 
-    fn remove_touching_shapes(shapes: &Vec<Vec<Box<Self>>>) -> Vec<Vec<Box<Self>>>;
-    fn lines_below_point(shape: &Vec<Box<Self>>, point: Point) -> usize {
-        let mut count = 0;
+    fn remove_touching_shapes(
+        shapes: &Vec<(Vec<Self>, bool)>,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized;
+    // fn lines_below_point(shape: &Vec<Box<Self>>, point: Point) -> usize {
+    //     let mut count = 0;
 
-        for i in 0..shape.len() {
-            let line = &shape[i];
-            let next_line = &shape[(i+1) % shape.len()];
-            for y in line.y(&next_line, point.x) {
-                if y < point.y {
-                    count += 1;
-                }
-            }
-        }
+    //     for i in 0..shape.len() {
+    //         let line = &shape[i];
+    //         let next_line = &shape[(i+1) % shape.len()];
+    //         for y in line.y(&next_line, point.x) {
+    //             if y < point.y {
+    //                 count += 1;
+    //             }
+    //         }
+    //     }
 
-        return count;
-    }
+    //     return count;
+    // }
+
+    fn find_barely_inner_point(lines: &Vec<Self>) -> Point where Self : Sized;
+
+    fn force_counter_clockwise(lines: &Vec<Self>) -> Vec<Self> where Self : Sized;
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +114,53 @@ pub enum AllIntersections {
     SoftLineSegment(LineSegment),
     LineSegment(LineSegment),
     Circle(Circle),
+}
+
+impl AllIntersections {
+    pub fn from_rects(arr: Vec<Rectangle>) -> Vec<Self> {
+        arr.iter().map(|x| AllIntersections::Rectangle(x.clone())).collect()
+    }
+    pub fn from_soft_line_segments(arr: Vec<LineSegment>) -> Vec<Self> {
+        arr.iter().map(|x| AllIntersections::SoftLineSegment(x.clone())).collect()
+    }
+    pub fn from_line_segment(arr: Vec<LineSegment>) -> Vec<Self> {
+        arr.iter().map(|x| AllIntersections::LineSegment(x.clone())).collect()
+    }
+    pub fn from_circle(arr: Vec<Circle>) -> Vec<Self> {
+        arr.iter().map(|x| AllIntersections::Circle(x.clone())).collect()
+    }
+    pub fn join_all(
+        rectangles: &Vec<Rectangle>,
+        soft_lines: &Vec<LineSegment>,
+        lines     : &Vec<LineSegment>,
+        circles   : &Vec<Circle>,
+    ) -> Vec<Self> {
+        vec![
+            Self::from_rects(rectangles.clone()),
+            Self::from_soft_line_segments(soft_lines.clone()),
+            Self::from_line_segment(lines.clone()),
+            Self::from_circle(circles.clone()),
+        ].iter().flatten().map(|x| x.clone()).collect::<Vec<Self>>()
+    }
+
+    pub fn seperate_vec(arr: &Vec<Self>) ->
+        (Vec<Rectangle>, Vec<LineSegment>, Vec<LineSegment>, Vec<Circle>) {
+        let mut rec    = Vec::new();
+        let mut line   = Vec::new();
+        let mut soft   = Vec::new();
+        let mut circle = Vec::new();
+
+        for item in arr {
+            match item {
+                AllIntersections::Rectangle(r) => rec.push(r.clone()),
+                AllIntersections::SoftLineSegment(s) => soft.push(s.clone()),
+                AllIntersections::LineSegment(l) => line.push(l.clone()),
+                AllIntersections::Circle(c) => circle.push(c.clone()),
+            }
+        }
+
+        (rec, line, soft, circle)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -348,6 +421,12 @@ impl std::ops::Mul<f64> for Point {
         Self {x: self.x * scalar, y: self.y * scalar}
     }
 }
+impl std::ops::Mul<Point> for f64 {
+    type Output = Point;
+    fn mul(self, point: Point) -> Point {
+        Point {x: point.x * self, y: point.y * self}
+    }
+}
 impl std::ops::Div<f64> for Point {
     type Output = Self;
     fn div(self, scalar: f64) -> Self {
@@ -403,6 +482,28 @@ impl Point {
             angle + 2.0*std::f64::consts::PI
         } else {
             angle
+        }
+    }
+
+    pub fn area(points: &Vec<Self>) -> f64 {
+        let mut positive = 0.0;
+        let mut negative = 0.0;
+
+        for i in 0..points.len() {
+            let j = (i+1) % points.len();
+            positive += points[i].x * points[j].y;
+            negative += points[i].y * points[j].x;
+        }
+
+        return (positive - negative) / 2.0;
+    }
+
+    pub fn normalize(&self) -> Self {
+        let distance = self.distance_to(&Point::zero());
+        if distance == 0.0 {
+            return Self::zero();
+        } else {
+            return Self::from(self.x / distance, self.y / distance);
         }
     }
 }
@@ -628,11 +729,177 @@ impl LineSegment {
             includes_second_point: includes_second_point,
         }
     }
+
+    pub fn from_points(points: &Vec<Point>) -> Vec<Self> {
+        let mut lines = Vec::new();
+
+        for i in 0..points.len() {
+            lines.push(Self::from_ray(
+                points[i],
+                points[(i+1) % points.len()],
+            ));
+        }
+
+        return lines;
+    }
+
+    pub fn from_line_to_line_counter_clockwise(lines: &Vec<Self>) -> Vec<Self> {
+        let area = Point::area(
+            &lines.iter().map(|x| x.p1).collect()
+        );
+
+        if area < 0.0 {
+            Self::from_lines_flipped(lines)
+        } else {
+            lines.clone()
+        }
+    }
+
+    pub fn from_lines_flipped(lines: &Vec<Self>) -> Vec<Self> {
+        let mut points : Vec<Point> = lines.iter().map(|x| x.p1).collect();
+        points.reverse();
+        Self::from_points(&points)
+    }
+
+    pub fn from_linestring(linestring: &geo_types::geometry::LineString) -> Vec<Self> {
+        let mut first_point = None;
+        let mut previous_point = None;
+        let mut new_lines = Vec::new();
+        for point in linestring {
+            match previous_point {
+                None => {
+                    first_point = Some(point);
+                    previous_point = Some(point);
+                },
+                Some(pp) => {
+                    new_lines.push(
+                        LineSegment::from(
+                            Point::from(
+                                pp.x, pp.y,
+                            ),
+                            Point::from(
+                                point.x, point.y,
+                            ),
+                        )
+                    );
+                    previous_point = Some(point);
+                }
+            }
+        }
+
+        if let (Some(first), Some(last)) = (first_point, previous_point) {
+            new_lines.push(
+                LineSegment::from(
+                    Point::from(
+                        last.x, last.y,
+                    ),
+                    Point::from(
+                        first.x, first.y,
+                    ),
+                )
+            );
+        }
+
+        return new_lines;
+    }
+
+    pub fn from_multipolygon(
+        multi_polygon: &geo_types::MultiPolygon,
+        can_cut_in_outer: bool,
+    ) -> Vec<(Vec<Self>, bool)> {
+        multi_polygon
+            .0
+            .iter()
+            .map(
+                |polygon| {
+                    let (outer, inner) = polygon.clone().into_inner();
+                    let mut new_lines = vec![
+                        (LineSegment::from_linestring(&outer), can_cut_in_outer)
+                    ];
+
+                    let mut inner_lines : Vec<(Vec<LineSegment>, bool)> = inner
+                        .iter()
+                        .map(|linestring|
+                            (LineSegment::from_linestring(&linestring), !can_cut_in_outer)
+                        )
+                        .collect();
+                    new_lines.append(&mut inner_lines);
+
+                    return new_lines;
+                }
+            )
+            .flatten()
+            .collect::<Vec<(Vec<Self>, bool)>>()
+    }
+
     pub fn point1(&self) -> Point {
         self.p1
     }
     pub fn point2(&self) -> Point {
         self.p2
+    }
+
+    pub fn mid_point(&self) -> Point {
+        (self.p1 + self.p2) / 2.0
+    }
+
+    pub fn points(lines: &Vec<Self>, repeat_first_point: bool) -> Vec<Point> {
+        let mut points : Vec<Point> =
+            lines.iter().map(|x| x.p1).collect();
+        if points.len() > 0 && repeat_first_point {
+            points.push(lines[0].p1);
+        }
+
+        return points;
+    }
+
+    pub fn points_geo_type(lines: &Vec<Self>, repeat_first_point: bool) -> Vec<geo_types::Coordinate> {
+        use geo_types::{Coordinate};
+        return Self::points(lines, repeat_first_point)
+            .iter()
+            .map(|point|
+                Coordinate {
+                    x: point.x,
+                    y: point.y,
+                }
+            )
+            .collect();
+    }
+
+    pub fn find_barely_inner_point(lines: &Vec<Self>) -> Point {
+        if lines.len() < 3 {
+            panic!("Lines must be >= 3. Found: {}", lines.len());
+        }
+
+        let p1 = lines[0].p1;
+        let p2 = lines[1].p1;
+        let p3 = lines[2].p1;
+
+        let p2p1 = (p1 - p2).normalize();
+        let p2p3 = (p3 - p2).normalize();
+
+        let d = (p2p1 + p2p3).normalize();
+
+        let epsilon = 0.0001;
+        let p2d = p2 + epsilon * d;
+
+        // if in polygon
+        if Self::is_inside(lines, p2d.x, p2d.y) {
+            p2d
+        } else {
+            p2 - epsilon * d
+        }
+    }
+
+    pub fn perpendicular_derivitive_point(&self) -> Point {
+        let m = self.p2 - self.p1;
+        let p = Point::from(-m.y, m.x);
+        let distance = p.distance_to(&Point::zero());
+        if distance == 0.0 {
+            p
+        } else {
+            p / distance
+        }
     }
 
     pub fn point_of_interception_endless_lines(
@@ -700,6 +967,73 @@ impl LineSegment {
         }
     }
 
+    pub fn does_intersect(
+        poly1: &Vec<Self>,
+        poly2: &Vec<Self>,
+    ) -> bool {
+        for line1 in poly1 {
+            for line2 in poly2 {
+                if line1.intersects_line(&line2) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    pub fn union(
+        poly1: &Vec<Self>,
+        poly2: &Vec<Self>,
+        can_cut_in_outer: bool,
+    ) -> Vec<(Vec<Self>, bool)> {
+        use geo_clipper::Clipper;
+        use geo_types::{LineString, Coordinate, Polygon};
+
+        let poly1 = Polygon::new(
+            LineString(Self::points_geo_type(poly1, true)),
+            vec![],
+        );
+
+        let poly2 = Polygon::new(
+            LineString(Self::points_geo_type(poly2, true)),
+            vec![],
+        );
+
+        Self::from_multipolygon(
+            &poly1.union(
+                &poly2,
+                1024.0,
+            ),
+            can_cut_in_outer,
+        )
+    }
+
+    pub fn differance(
+        poly1: &Vec<Self>,
+        poly2: &Vec<Self>,
+        can_cut_in_outer: bool,
+    ) -> Vec<(Vec<Self>, bool)> {
+        use geo_clipper::Clipper;
+        use geo_types::{LineString, Coordinate, Polygon};
+
+        let poly1 = Polygon::new(
+            LineString(Self::points_geo_type(poly1, true)),
+            vec![],
+        );
+
+        let poly2 = Polygon::new(
+            LineString(Self::points_geo_type(poly2, true)),
+            vec![],
+        );
+
+        Self::from_multipolygon(
+            &poly1.difference(
+                &poly2,
+                1024.0,
+            ),
+            can_cut_in_outer,
+        )
+    }
 
     pub fn create_path(points: &Vec<Point>, enclose: bool) -> Vec<Self> {
         let mut r = Vec::new();
@@ -897,7 +1231,51 @@ impl LineSegment {
         }
     }
 
+    pub fn closest_point_on_line_to_point(&self, point: &Point) -> Point {
+        let p = self.perpendicular_derivitive_point();
+        let line = Self::from(*point, *point + p);
+
+        let (min_x_point, max_x_point) = if self.p1.x < self.p2.x {
+            (self.p1, self.p2)
+        } else if self.p1.x > self.p2.x {
+            (self.p2, self.p1)
+        } else if self.p1.y < self.p2.y {
+            (self.p1, self.p2)
+        } else {
+            (self.p2, self.p1)
+        };
+
+
+        if let Some(intersection) =
+            self.point_of_interception_endless_lines(&line) {
+            if intersection.x > self.p1.x &&
+                intersection.x > self.p2.x
+            {
+                max_x_point
+            } else if intersection.x < self.p1.x &&
+                intersection.x < self.p2.x {
+                min_x_point
+            } else if intersection.y > self.p1.y &&
+                intersection.y > self.p2.y {
+                max_x_point
+            }  else if intersection.y < self.p1.y &&
+                intersection.y < self.p2.y {
+                min_x_point
+            } else {
+                intersection
+            }
+        } else {
+            // Should never happen
+            // panic!("Should never happen E04098");
+            self.mid_point()
+        }
+    }
+
     pub fn distance_to_point(&self, point: &Point) -> f64 {
+        // New way. Draw a perpendicular line to self through point.
+        //      Find intersecting point on both lines. Find smallest distance
+        //      from self.p1, self.p2, intersecting point to point given.
+
         // TODO: This function really needs to be speed up a bit.
         // Maybe look up the best way how instead of trying to figure
         //      out on your own.
@@ -929,10 +1307,10 @@ impl LineSegment {
         };
 
 
-        let l11 = degrees.cos();
+        let l11 =  degrees.cos();
         let l12 = -degrees.sin();
-        let l21 = degrees.sin();
-        let l22 = degrees.cos();
+        let l21 =  degrees.sin();
+        let l22 =  degrees.cos();
 
         let m = (l11, l12, l21, l22);
         let p1 = multiply_matrix_m(m, self.p1.x, self.p1.y);
@@ -977,7 +1355,6 @@ impl LineSegment {
         default_to_positive: &mut bool,
         can_cut: &mut Box<impl FnMut(f64, f64) -> bool>,
     ) -> (f64, f64) {
-        let epsilon = 0.00001;
         let mid_point = (self.p1 + self.p2) / 2.0;
 
         let (dx, dy) = if let Some(ijm) = self.slope() {
@@ -988,9 +1365,10 @@ impl LineSegment {
             (1.0, 0.0)
         };
 
+        let epsilon = 0.0000001;
         if can_cut(
             mid_point.x + dx * epsilon,
-            mid_point.y + dy * epsilon
+            mid_point.y + dy * epsilon,
         ) {
             *default_to_positive = true;
             (dx, dy)
@@ -1019,8 +1397,8 @@ impl LineSegment {
             let mut seen1 = 0;
             let mut seen2 = 0;
             for poly in borders {
-                seen1 += LineSegment::y_before(poly, p1.x, p1.y) % 2;
-                seen2 += LineSegment::y_before(poly, p2.x, p2.y) % 2;
+                seen1 += if !LineSegment::is_inside(poly, p1.x, p1.y) {1} else {1};
+                seen2 += if !LineSegment::is_inside(poly, p2.x, p2.y) {1} else {1};
             }
 
             // Keep polygons with real borders
@@ -1047,12 +1425,13 @@ impl LineSegment {
             let mut seen1 = 0;
             let mut seen2 = 0;
             for poly in borders {
-                seen1 += LineSegment::y_before(poly, p1.x, p1.y) % 2;
-                seen2 += LineSegment::y_before(poly, p2.x, p2.y) % 2;
+                seen1 += if !LineSegment::is_inside(poly, p1.x, p1.y) {1} else {0};
+                seen2 += if !LineSegment::is_inside(poly, p2.x, p2.y) {1} else {0};
             }
 
             // Keep polygons with real borders
-            if (seen1 > 0) == (seen2 > 0) {
+            if (seen1 > 0) == (seen2 > 0) &&
+                seen1 > 0 && seen2 > 0 {
                 return false;
             }
         }
@@ -1340,6 +1719,12 @@ impl LineSegment {
                 let polygon : Vec<Self> = polygon.iter().map(
                     |x| x.0.clone()
                 ).collect();
+                let area = Point::area(&
+                    polygon
+                        .iter()
+                        .map(|x| x.p1)
+                        .collect()
+                );
 
                 let mut polygon_straight_lines = Vec::new();
                 polygon_straight_lines.push(polygon[0].clone());
@@ -1354,7 +1739,7 @@ impl LineSegment {
                 }
 
                 return Self::is_real_border_line_based(&polygon_straight_lines, &borders);
-
+                // && area.abs() > 0.005;
             })
             .map(|polygon|
                 polygon.iter().map(
@@ -1893,9 +2278,59 @@ impl LineSegment {
         }).collect();
     }
 
+    pub fn remove_wrong_determinate_polygons(
+        lines: &Vec<Self>,
+        determinate_is_positive: bool,
+    ) -> Vec<Self> {
+
+        let mut best_index = lines.len();
+        let mut best_area = 0.0;
+        let polygons = Self::line_segments_to_polygons(lines);
+        for i in 0..polygons.len() {
+            let mut score = 0;
+            for j in 0..polygons[i].len() {
+                let j_next = (j+1) % polygons[i].len();
+                let increment =
+                    (lines.len() + polygons[i][j].1 - polygons[i][j_next].1) % lines.len();
+                let decrement = (lines.len() - increment) % lines.len();
+
+                if increment > decrement {
+                    // score -= decrement as i64;
+                    score -= 1;
+                } else {
+                    // score += increment as i64;
+                    score += 1;
+                }
+            }
+
+            if (score > 0) == determinate_is_positive {
+                let area = Point::area(
+                    &LineSegment::points(
+                        &polygons[i].iter().map(
+                            |x| x.0.clone()
+                        ).collect(),
+                        false,
+                    )
+                ).abs();
+
+                if area > best_area {
+                    best_area = area;
+                    best_index = i;
+                }
+            }
+        }
+
+        if best_index < lines.len() {
+            return polygons[best_index].iter().map(
+                |x| x.0.clone()
+            ).collect();
+        } else {
+            return Vec::new();
+        }
+    }
+
     pub fn remove_inner_intersecting_polygons(lines: &Vec<Self>) -> Vec<Self> {
         let graph = LineSegment::all_intersections_combine_points(&lines, 1000.0);
-        Self::print_python_code_to_graph(lines);
 
         let mut current_index = 0;
         for i in 1..graph.len() {
@@ -1919,7 +2354,7 @@ impl LineSegment {
                 continue;
             }
             let angle = graph[i].0.counter_clockwise_angle_to(&graph[current_index].0);
-            let Some((next_vertex_angle, next_vertex_index)) = next_vertex_tuple else {
+            let Some((next_vertex_angle, _)) = next_vertex_tuple else {
                 next_vertex_tuple = Some((angle, i));
                 continue;
             };
@@ -1933,13 +2368,16 @@ impl LineSegment {
         };
         points.push(next_vertex.1);
 
-        while points[0] != points[points.len()-1] {
+        let mut points_seen = vec![false; graph.len()];
+        points_seen[points[points.len()-1]] = true;
+
+        while points.len() >= 2 && points[0] != points[points.len()-1] {
             let p1 = points[points.len()-2];
             let p2 = points[points.len()-1];
 
             let mut next_tuple = None;
             for p3 in &graph[p2].1 {
-                if p3.0 == p1 { continue; }
+                if p3.0 == p1 || points_seen[p3.0] { continue; }
 
                 let angle = Point::right_angle(
                     &graph[p1].0,
@@ -1957,10 +2395,26 @@ impl LineSegment {
             }
             let Some(next_tuple) = next_tuple else {
                 eprintln!("POINTS: {:?}", points);
-                panic!("Should have found another point.");
+                for (index, (p1, next_point)) in graph.iter().enumerate() {
+                    eprintln!("{}) {:?}:", index, p1);
+                    eprint!("\t[");
+                    for (point_index, _) in next_point {
+                        eprint!("{}, ", point_index);
+                    }
+                    eprintln!("]");
+                }
+                Self::print_python_code_to_graph(&lines);
+                eprintln!("Should have found another point. E0768");
+                eprintln!("We will try another way.");
+
+                // panic!("Should have found another point. E0768");
+
+                points.pop();
+                continue;
             };
 
             points.push(next_tuple.1);
+            points_seen[next_tuple.1] = true;
         }
 
         let mut r = Vec::new();
@@ -1974,34 +2428,106 @@ impl LineSegment {
         return r;
     }
 
+    pub fn fix_lines_too_close_to_polygon(
+        origonal_polygon: &Vec<Self>,
+        new_thicker_polygon: &Vec<Self>,
+        radius: f64,
+    ) -> Vec<Self> {
+
+        if radius == 0.0 || new_thicker_polygon.len() == 0 {
+            return new_thicker_polygon.clone();
+        }
+
+        // remove unwanted points
+        let mut new_points = Vec::new();
+        let mut ith_count = new_thicker_polygon[0].times_cross_line_vec(&origonal_polygon);
+        for i in 0..new_thicker_polygon.len() {
+            let i_next = (i+1) % new_thicker_polygon.len();
+            let ith_next_count = new_thicker_polygon[i_next].times_cross_line_vec(&origonal_polygon);
+            if ith_count == 0 || ith_next_count > 0 {
+                new_points.push(new_thicker_polygon[i].p1);
+            }
+            ith_count = ith_next_count;
+        }
+
+        // Move points away from line by bit radius
+        //  that are too close to line.
+        let points = new_points;
+        let mut new_points = Vec::new();
+        for i in 0..points.len() {
+            let mut passed = true;
+            for j in 0..origonal_polygon.len() {
+                let point = origonal_polygon[j]
+                    .closest_point_on_line_to_point(&points[i]);
+                let distance = point.distance_to(&points[i]);
+                if distance < radius - 0.0001 {
+                    passed = false;
+                    // new_points[i] = point + radius * (new_points[i] - point).normalize();
+                    // new_points[i] = point;
+                }
+            }
+            if passed {
+                new_points.push(points[i]);
+            }
+        }
+
+        // Move line away from point by bit radius
+        //  that are too close to point.
+        //  TODO: I dont think its necessary
+
+        let mut new_lines = Vec::new();
+        for i in 0..new_points.len() {
+            let j = (i+1) % new_points.len();
+            new_lines.push(
+                Self::from(
+                    new_points[i],
+                    new_points[j],
+                )
+            );
+        }
+
+        return new_lines;
+    }
+
     pub fn print_python_code_to_graph(lines: &Vec<Self>) {
-        // println!("import matplotlib.pyplot as plt\n");
-        // for line in lines {
-        //     println!("plt.plot([{}, {}], [{}, {}])",
-        //         line.p1.x, line.p2.x, line.p1.y, line.p2.y);
-        // }
-        // println!("\nplt.show()");
+        eprintln!("import matplotlib.pyplot as plt\n");
+        for line in lines {
+            eprintln!("plt.plot([{}, {}], [{}, {}])",
+                line.p1.x, line.p2.x, line.p1.y, line.p2.y);
+        }
+        eprintln!("\nplt.show()");
     }
 }
 
 impl Intersection for LineSegment {
-    fn y(&self, next: &Self, x: f64) -> Vec<f64> {
+    fn y(&self, next: &Self, x: f64) -> Vec<(f64, bool)> {
         let contains_x =
             (self.p1.x < self.p2.x && x >= self.p1.x && x < self.p2.x) ||
             (self.p1.x > self.p2.x && x <= self.p1.x && x > self.p2.x);
         let end_x = x == self.p2.x;
         let lines_on_same_side_as_x =
-            (self.p1.x >= x && self.p2.x >= x && next.p1.x >= x && next.p2.x > x) ||
-            (self.p1.x <= x && self.p2.x <= x && next.p1.x <= x && next.p2.x < x);
+            (self.p1.x > x && self.p2.x >= x && next.p1.x >= x && next.p2.x > x) ||
+            (self.p1.x < x && self.p2.x <= x && next.p1.x <= x && next.p2.x < x);
         if let Some((b, m)) = self.y_intercept_and_slope() {
             if contains_x || (end_x && lines_on_same_side_as_x) {
-                return vec![m * x + b];
+                return vec![(m * x + b, self.p1.x < self.p2.x)];
             } else {
                 return Vec::new();
             }
-        } else if self.p1.x == x {
+        } else if x == self.p1.x {
+            let (little_y, big_y) = if self.p1.y < self.p2.y {
+                (self.p1.y, self.p2.y)
+            } else {
+                (self.p2.y, self.p1.y)
+            };
+            let epsilon = 0.00001;
+            if little_y + epsilon >= big_y - epsilon {
+                return Vec::new();
+            }
+
             return vec![
-                self.p1.y,
+                (little_y + epsilon, true),
+                (big_y - epsilon, false),
             ];
         } else {
             return Vec::new();
@@ -2081,11 +2607,127 @@ impl Intersection for LineSegment {
         self.distance_to_point(&point)
     }
 
-    fn add_radius<'a>(
-        items: &Vec<&'a Self>,
+    fn add_radius(
+        items: &Vec<Self>,
         bit_radius: f64,
-        mut can_cut: Box<impl FnMut(f64, f64) -> bool>,
-    ) -> Vec<Box<Self>> {
+        cut_inside: bool,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
+        use geo_types::{LineString, Coordinate, Polygon};
+        let mut input : Vec<Coordinate<f64>> =
+            items
+                .iter()
+                .map(|x| {
+                    Coordinate {
+                        x: x.p1.x,
+                        y: x.p1.y,
+                    }
+                }).collect::<Vec<Coordinate<f64>>>();
+        input.push(
+            Coordinate {
+                x: items[0].p1.x,
+                y: items[0].p1.y,
+            }
+        );
+        let input : LineString<f64> = LineString(input);
+
+        let inner_point = Self::find_barely_inner_point(
+            &items
+                .iter()
+                .map(|x|
+                    (*x).clone()
+                ).collect()
+        );
+
+        use geo_clipper::Clipper;
+
+        let subject = Polygon::new(
+            input,
+            vec![],
+        );
+
+        // let result = subject.intersection(&clip, 1.0);
+        let result : Vec<(Vec<LineSegment>, bool)> = subject.offset(
+            if cut_inside {
+                -bit_radius
+            } else {
+                bit_radius
+            },
+            // geo_clipper::JoinType::Miter(10.0),
+            // geo_clipper::JoinType::Round(10.0),
+            geo_clipper::JoinType::Square,
+            geo_clipper::EndType::ClosedPolygon,
+            1024.0,
+        ).0.iter().map(
+            |polygon| {
+                let (outer, inner) = polygon.clone().into_inner();
+
+                let mut new_lines = vec![
+                    (LineSegment::from_linestring(&outer)
+                        .iter()
+                        .map(|x| x.clone())
+                        .collect(),
+                        cut_inside,
+                    )
+                ];
+
+                let mut inner_lines : Vec<(Vec<LineSegment>, bool)> = inner
+                    .iter()
+                    .map(|linestring|
+                        (LineSegment::from_linestring(&linestring)
+                            .iter()
+                            .map(|x| x.clone())
+                            .collect(), !cut_inside)
+                    )
+                    .collect();
+                new_lines.append(&mut inner_lines);
+
+                return new_lines;
+            }
+        )
+            .flatten()
+            .collect();
+        return result;
+        /*
+        // if let Ok(lines) = offset_polygon::offset_polygon(
+        //     &input,
+        //     // if can_cut(inner_point.x, inner_point.y) {
+        //     //     bit_radius
+        //     // } else {
+        //     //     -bit_radius
+        //     // },
+        //     // 8.0,
+        //     1.0,
+        //     0.0,
+        // ) {
+        //     eprintln!("{:?}", lines);
+        //     lines
+        //         .iter()
+        //         .map(|line| {
+        //             let points = line.clone().into_points();
+        //             let mut new_lines = Vec::new();
+
+        //             for i in 1..points.len() {
+        //                 new_lines.push(Box::from(
+        //                     LineSegment::from(
+        //                         Point::from(
+        //                             points[i-1].x(),
+        //                             points[i-1].y(),
+        //                         ),
+        //                         Point::from(
+        //                             points[i].x(),
+        //                             points[i].y(),
+        //                         ),
+        //                     )
+        //                 ));
+        //             }
+
+        //             return new_lines;
+        //         })
+        //         .collect()
+        // } else {
+        //     Vec::new()
+        // };
+
         let mut points = Vec::new();
         // points.push(items[0].p1);
         for line in items {
@@ -2094,6 +2736,11 @@ impl Intersection for LineSegment {
             }
             points.push(line.p1);
         }
+
+        let items_no_address : Vec<Self> = items.iter()
+            .map(|x| (*x).clone())
+            .collect();
+
         if points.len() > 0 && points[0] == points[points.len()-1] {
             points.remove(points.len()-1);
         }
@@ -2103,6 +2750,7 @@ impl Intersection for LineSegment {
         let mut last_dxy_is_positive = true;
 
         for i in 0..points.len() {
+            let i = (points.len() - 1 + i) % points.len();
             let j = (i+1) % points.len();
             let k = (i+2) % points.len();
             let (
@@ -2114,8 +2762,6 @@ impl Intersection for LineSegment {
                 points[j].x, points[j].y,
                 points[k].x, points[k].y,
             );
-
-            let epsilon = 0.00001; // std::f64::EPSILON;
 
             let (ij_dx, ij_dy) = LineSegment::from_ray(
                 Point::from(ix, iy),
@@ -2172,6 +2818,44 @@ impl Intersection for LineSegment {
                 // {
                 //     // new_points.push(intersect_point);
                 // }
+
+                /*
+                let line_ik = lines_and_curves::LineSegment::from(
+                    points[i],
+                    points[k],
+                );
+                let line_i_intersect_point = lines_and_curves::LineSegment::from(
+                    points[i],
+                    intersect_point,
+                );
+
+                let should_skip = if let Some((_, slope_ik)) = line_ik.y_intercept_and_slope() {
+                    if let Some((_, slope_i_ip)) = line_i_intersect_point.y_intercept_and_slope() {
+                        if let Some((_, slope_ij)) = line_ij.y_intercept_and_slope() {
+                            // if ik in between ij and ip
+                            (slope_ik <= slope_ij && slope_ik >= slope_i_ip) ||
+                                (slope_ik >= slope_ij && slope_ik <= slope_i_ip)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if should_skip {
+                    // new_points.push(
+                    //     Point::zero()
+                    // );
+                    let mut intersect_point = intersect_point;
+                    intersect_point.y += 1.0;
+                    new_points.push(intersect_point);
+                } else {
+                    new_points.push(intersect_point);
+                }
+                */
                 new_points.push(intersect_point);
             } else {
                 // return Vec::new();
@@ -2180,43 +2864,211 @@ impl Intersection for LineSegment {
                 assert!(bit_radius < 0.001 || can_cut(line_ij.p2.x, line_ij.p2.y));
                 new_points.push(line_ij.p2);
             };
-
         }
+
+        assert_eq!(points.len(), new_points.len());
+        let mut new_x_points = Vec::new();
+        for i in 0..new_points.len() {
+            new_x_points.push(
+                Point::from(
+                    new_points[i].x,
+                    points[i].y,
+                )
+            );
+        }
+        let new_x_area = Point::area(
+            &new_x_points
+        );
+
+        let area = Point::area(
+            &new_points
+        );
+
+
+        // Cut shorter around sharp corners
+        let mut points_with_cut = Vec::new();
+        for i in 0..new_points.len() {
+            let i = (new_points.len() - 1 + i) % new_points.len();
+            let j = (i+1) % new_points.len();
+            let k = (i+2) % new_points.len();
+
+            let line_ij = lines_and_curves::LineSegment::from_ray(
+                new_points[i], new_points[j]
+            );
+
+            let line_jk = lines_and_curves::LineSegment::from_ray(
+                new_points[j], new_points[k]
+            );
+
+            // let line_ik = lines_and_curves::LineSegment::from_ray(
+            //     new_points[i], new_points[k]
+            // );
+
+            // let line_ij_og = lines_and_curves::LineSegment::from_ray(
+            //     points[i], points[j]
+            // );
+            // let line_i_ip = lines_and_curves::LineSegment::from_ray(
+            //     points[i], new_points[j]
+            // );
+
+            let intersect_point = new_points[j];
+
+            /*
+            let should_skip = if let Some((_, slope_ik)) = line_ik.y_intercept_and_slope() {
+                if let Some((_, slope_i_ip)) = line_i_ip.y_intercept_and_slope() {
+                    if let Some((_, slope_ij)) = line_ij_og.y_intercept_and_slope() {
+                        // if ik in between ij and ip
+                        (slope_ik <= slope_ij && slope_ik >= slope_i_ip) ||
+                            (slope_ik >= slope_ij && slope_ik <= slope_i_ip)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if should_skip {
+                // points_with_cut.push(line_ik.mid_point());
+                // continue;
+            }
+            */
+
+            let dij = (line_ij.p1 - line_ij.p2) / line_ij.length();
+            let djk = (line_jk.p2 - line_jk.p1) / line_jk.length();
+            let d = (dij + djk) / 2.0;
+            let d = d / d.distance_to(&Point::zero());
+            let inverse_d = Point::from(d.y, -d.x);
+
+            let new_p1 = points[j] + inverse_d - d * bit_radius.abs();
+            let new_p2 = points[j] - inverse_d - d * bit_radius.abs();
+
+            let cut_line = LineSegment::from_ray(new_p1, new_p2);
+
+            let (Some(cut_ij), Some(cut_jk)) =
+                (cut_line.point_of_interception_endless_lines(&line_ij),
+                 cut_line.point_of_interception_endless_lines(&line_jk))
+            else {
+                points_with_cut.push(intersect_point);
+                continue;
+            };
+
+            if // bit_radius > 0.0 &&
+                line_ij.contains_point(cut_ij) &&
+                line_jk.contains_point(cut_jk) {
+                points_with_cut.push(cut_ij);
+                points_with_cut.push(cut_jk);
+            } else {
+                points_with_cut.push(intersect_point);
+            }
+        }
+        let new_points = points_with_cut;
+
         let mut lines = Vec::new();
         for i in 0..new_points.len() {
             let j = (i+1) % new_points.len();
             lines.push(LineSegment::from_ray(new_points[i], new_points[j]));
         }
-        let line_count = lines.len();
-        let lines = Self::remove_inner_intersecting_polygons(&lines);
+        let og_area = Point::area(
+            &points,
+            // &items
+            //     .iter()
+            //     .map(|x| x.p1)
+            //     .collect::<Vec<Point>>()
+        );
+
+        // let lines = Self::remove_inner_intersecting_polygons(&lines);
+        let lines = Self::remove_wrong_determinate_polygons(
+            &lines,
+            og_area < 0.0,
+        );
+        let lines = Self::fix_lines_too_close_to_polygon(&items_no_address, &lines, bit_radius);
         let lines : Vec<Box<Self>> = lines.iter().map(|line| {
             Box::from(line.clone())
         }).collect();
 
-        return lines;
+        if (og_area > 0.0) != (new_x_area > 0.0) {
+            return Vec::new();
+        }
+
+        return vec![lines];
+        */
     }
 
     fn remove_touching_shapes(
-        shapes: &Vec<Vec<Box<Self>>>
-    ) -> Vec<Vec<Box<Self>>> {
+        shapes: &Vec<(Vec<Self>, bool)>,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         if shapes.len() == 0 {
             return Vec::new();
         }
-        let shapes : Vec<Vec<Self>> = shapes.iter()
-            .map(
-                |shape| shape.iter().map(
-                    |line| (*(*line)).clone()
-                ).collect()
-            ).collect();
+        let mut shapes = shapes.clone();
+
+        let mut found_intersection = true;
+        while found_intersection {
+            found_intersection = false;
+            'intersection_searcher: for i in 0..shapes.len() {
+                for j in (i+1)..shapes.len() {
+
+                    if Self::does_intersect(&shapes[i].0, &shapes[j].0) {
+                        let shape_i_can_cut = shapes[i].1;
+                        let shape_j_can_cut = shapes[j].1;
+
+                        if shape_i_can_cut == shape_j_can_cut {
+                            let mut union = Self::union(
+                                &shapes[i].0, &shapes[j].0, shape_i_can_cut,
+                            );
+                            if union.len() == 2 &&
+                                union[0].1 == shape_i_can_cut &&
+                                union[1].1 == shape_j_can_cut {
+                                    continue;
+                            }
+                            shapes.append(
+                                &mut union
+                            );
+                        } else if shape_i_can_cut {
+                            shapes.append(
+                                &mut Self::differance(
+                                    &shapes[i].0, &shapes[j].0, shape_i_can_cut,
+                                ),
+                            );
+                        } else {
+                            shapes.append(&mut Self::differance(
+                                &shapes[j].0, &shapes[i].0, shape_j_can_cut));
+                        }
+
+                        shapes.swap_remove(j);
+                        shapes.swap_remove(i);
+                        found_intersection = true;
+                        break 'intersection_searcher;
+                    }
+                }
+            }
+        }
+
+        return shapes.clone();
+
+        /*
+
         let polygons = Self::get_outlines_and_inlines_of_touching_polygons(&shapes);
-        let polygons_box : Vec<Vec<Box<Self>>> = polygons.iter()
+        let polygons_box : Vec<(Vec<Self>, bool)> = polygons.iter()
             .map(
                 |poly| poly.iter().map(
-                    |line| Box::from(line.clone())
+                    |line| line.clone()
                 ).collect()
             ).collect();
 
         return polygons_box;
+        */
+    }
+
+    fn find_barely_inner_point(lines: &Vec<Self>) -> Point where Self : Sized {
+        return Self::find_barely_inner_point(lines);
+    }
+
+    fn force_counter_clockwise(lines: &Vec<Self>) -> Vec<Self> where Self : Sized {
+        Self::from_line_to_line_counter_clockwise(&lines)
     }
 }
 
@@ -2247,11 +3099,12 @@ impl cnc_router::CNCPath for LineSegment {
 }
 
 impl Intersection for Rectangle {
-    fn y(&self, _next: &Self, x: f64) -> Vec<f64> {
+    fn y(&self, _next: &Self, x: f64) -> Vec<(f64, bool)> {
         if self.contains_x(x) {
+            eprintln!("RECTANGLE USED");
             vec![
-                self.start_point.y,
-                self.end_point.y,
+                (self.min_y(), true),
+                (self.max_y(), false),
             ]
         } else {
             Vec::new()
@@ -2339,26 +3192,56 @@ impl Intersection for Rectangle {
     }
 
     fn add_radius(
-        items: &Vec<&Self>,
+        items: &Vec<Self>,
         radius: f64,
-        can_cut: Box<impl FnMut(f64, f64) -> bool>,
-    ) -> Vec<Box<Self>> {
+        cut_inside: bool,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         let mut new_rects = Vec::new();
+        let cut_inside_factor = if cut_inside {
+            -1.0
+        } else {
+            1.0
+        };
+
         for rect in items {
-            new_rects.push(Box::from(
+            new_rects.push(
                 Rectangle::from(
-                    Point::from(rect.min_x() - radius, rect.min_y() - radius),
-                    Point::from(rect.max_x() + radius, rect.max_y() + radius),
+                    Point::from(
+                        rect.min_x() - radius * cut_inside_factor,
+                        rect.min_y() - radius * cut_inside_factor,
+                    ),
+                    Point::from(
+                        rect.max_x() + radius * cut_inside_factor,
+                        rect.max_y() + radius * cut_inside_factor,
+                    ),
                 )
-            ));
+            );
         }
-        return new_rects;
+        return vec![(new_rects, cut_inside)];
     }
 
-    fn remove_touching_shapes(shapes: &Vec<Vec<Box<Self>>>) -> Vec<Vec<Box<Self>>> {
+    fn remove_touching_shapes(
+        shapes: &Vec<(Vec<Self>, bool)>,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         return shapes.iter().map(|x| {
             x.clone()
         }).collect();
+    }
+
+    fn find_barely_inner_point(lines: &Vec<Self>) -> Point where Self : Sized {
+        let Some(rect) = lines.first() else {
+            panic!("Could not find a rectangle.");
+        };
+
+        let x = rect.min_x();
+        let y = rect.min_y();
+        let epsilon = 0.00001;
+
+        return Point::from(x+epsilon, y + epsilon);
+    }
+
+    fn force_counter_clockwise(lines: &Vec<Self>) -> Vec<Self> where Self : Sized {
+        lines.clone()
     }
 }
 
@@ -2404,7 +3287,7 @@ impl cnc_router::CNCPath for Rectangle {
 }
 
 impl Intersection for Circle {
-    fn y(&self, _next: &Self, x: f64) -> Vec<f64> {
+    fn y(&self, _next: &Self, x: f64) -> Vec<(f64, bool)> {
         // X^2 + Y^2 = r^2
         // Y^2 = r^2 - X^2
         // Y += sqrt(r^2 - X^2)
@@ -2412,8 +3295,8 @@ impl Intersection for Circle {
             let difx = x - self.center.x;
             let positive_value = (self.radius * self.radius - difx * difx).sqrt();
             vec![
-                self.center.y + positive_value,
-                self.center.y - positive_value,
+                (self.center.y + positive_value, false),
+                (self.center.y - positive_value, true),
             ]
         } else {
             Vec::new()
@@ -2474,26 +3357,44 @@ impl Intersection for Circle {
     }
 
     fn add_radius(
-        items: &Vec<&Self>,
+        items: &Vec<Self>,
         radius: f64,
-        can_cut: Box<impl FnMut(f64, f64) -> bool>,
-    ) -> Vec<Box<Self>> {
+        cut_inside: bool,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         let mut v = Vec::new();
 
         for circle in items {
-            v.push(Box::from(Circle{
+            v.push(Circle{
                 center: circle.center,
-                radius: circle.radius + radius,
-            }));
+                radius: circle.radius + if cut_inside {
+                    -radius
+                } else {
+                    radius
+                },
+            });
         }
 
-        return v;
+        return vec![(v, cut_inside)];
     }
 
-    fn remove_touching_shapes(shapes: &Vec<Vec<Box<Self>>>) -> Vec<Vec<Box<Self>>> {
+    fn remove_touching_shapes(
+        shapes: &Vec<(Vec<Self>, bool)>,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         return shapes.iter().map(|x| {
             x.clone()
         }).collect();
+    }
+
+    fn find_barely_inner_point(lines: &Vec<Self>) -> Point where Self : Sized {
+        let Some(circle) = lines.first() else {
+            panic!("Could not find a circle.");
+        };
+
+        let epsilon = 0.00001;
+        circle.center + Point::from(circle.radius - epsilon, 0.0)
+    }
+    fn force_counter_clockwise(lines: &Vec<Self>) -> Vec<Self> where Self : Sized {
+        lines.clone()
     }
 }
 
@@ -2708,7 +3609,7 @@ impl Iterator for RectangleConnectionsItr {
 }
 
 impl Intersection for AllIntersections {
-    fn y(&self, next: &Self, x: f64) -> Vec<f64> {
+    fn y(&self, next: &Self, x: f64) -> Vec<(f64, bool)> {
         match (self, next) {
             (AllIntersections::Rectangle(r1), AllIntersections::Rectangle(r2)) => {
                 r1.y(&r2, x)
@@ -2793,83 +3694,105 @@ impl Intersection for AllIntersections {
     }
 
     fn add_radius(
-        items: &Vec<&Self>,
-        radius: f64,
-        can_cut: Box<impl FnMut(f64, f64) -> bool>,
-    ) -> Vec<Box<Self>> {
+        items: &Vec<Self>,
+        bit_radius: f64,
+        cut_inside: bool,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         if items.len() == 0 {
             return Vec::new();
         }
 
         match items[0] {
             AllIntersections::Rectangle(_) => {
-                let v : Vec<&Rectangle> = items.iter().filter_map(|x| {
+                let v : Vec<Rectangle> = items.iter().filter_map(|x| {
                     if let AllIntersections::Rectangle(r) = x {
-                        Some(r)
+                        Some(r.clone())
                     } else {
                         None
                     }
                 }).collect();
                 Intersection::add_radius(
                     &v,
-                    radius,
-                    can_cut,
+                    bit_radius,
+                    cut_inside,
                 ).iter().map(|r| {
-                    Box::from(AllIntersections::Rectangle(*r.clone()))
+                    (
+                        r.0.iter().map(|r| {
+                            AllIntersections::Rectangle(r.clone())
+                        }).collect(),
+                        r.1,
+                    )
                 }).collect()
             }
             AllIntersections::LineSegment(_) => {
                 let v = items.iter().filter_map(|x| {
                     if let AllIntersections::LineSegment(l) = x {
-                        Some(l)
+                        Some(l.clone())
                     } else {
                         None
                     }
                 }).collect();
                 Intersection::add_radius(
                     &v,
-                    radius,
-                    can_cut,
+                    bit_radius,
+                    cut_inside,
                 ).iter().map(|l| {
-                    Box::from(AllIntersections::LineSegment(*l.clone()))
+                    (
+                        l.0.iter().map(|l| {
+                            AllIntersections::LineSegment(l.clone())
+                        }).collect(),
+                        l.1,
+                    )
                 }).collect()
             }
             AllIntersections::SoftLineSegment(_) => {
                 let v = items.iter().filter_map(|x| {
                     if let AllIntersections::SoftLineSegment(l) = x {
-                        Some(l)
+                        Some(l.clone())
                     } else {
                         None
                     }
                 }).collect();
                 Intersection::add_radius(
                     &v,
-                    radius,
-                    can_cut,
+                    bit_radius,
+                    cut_inside,
                 ).iter().map(|l| {
-                    Box::from(AllIntersections::SoftLineSegment(*l.clone()))
+                    (
+                        l.0.iter().map(|l| {
+                            AllIntersections::SoftLineSegment(l.clone())
+                        }).collect(),
+                        l.1,
+                    )
                 }).collect()
             }
             AllIntersections::Circle(_) => {
                 let v = items.iter().filter_map(|x| {
                     if let AllIntersections::Circle(c) = x {
-                        Some(c)
+                        Some(c.clone())
                     } else {
                         None
                     }
                 }).collect();
                 Intersection::add_radius(
                     &v,
-                    radius,
-                    can_cut,
+                    bit_radius,
+                    cut_inside,
                 ).iter().map(|c| {
-                    Box::from(AllIntersections::Circle(*c.clone()))
+                    (
+                        c.0.iter().map(|c| {
+                            AllIntersections::Circle(c.clone())
+                        }).collect(),
+                        c.1,
+                    )
                 }).collect()
             }
         }
     }
 
-    fn remove_touching_shapes(shapes: &Vec<Vec<Box<Self>>>) -> Vec<Vec<Box<Self>>> {
+    fn remove_touching_shapes(
+        shapes: &Vec<(Vec<Self>, bool)>,
+    ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         let mut line_segment_shapes = Vec::new();
         let mut soft_line_segment_shapes = Vec::new();
         let mut circle_shapes = Vec::new();
@@ -2880,17 +3803,17 @@ impl Intersection for AllIntersections {
             let mut soft_line_segments = Vec::new();
             let mut circles = Vec::new();
             let mut rectangles = Vec::new();
-            for intersection in shape {
-                let intersection = *(*intersection).clone();
+            for intersection in &shape.0 {
+                let intersection = intersection.clone();
                 match intersection {
                     AllIntersections::Rectangle(r) => {
                         rectangles.push(r)
                     },
                     AllIntersections::SoftLineSegment(l) => {
-                        soft_line_segments.push(Box::from(l))
+                        soft_line_segments.push(l)
                     },
                     AllIntersections::LineSegment(l) => {
-                        line_segments.push(Box::from(l))
+                        line_segments.push(l)
                     },
                     AllIntersections::Circle(c) => {
                         circles.push(c)
@@ -2904,16 +3827,16 @@ impl Intersection for AllIntersections {
                 circles.len(), rectangle_shapes.len()
             ) {
                 (x, 0, 0, 0) if x > 0 => {
-                    line_segment_shapes.push(line_segments)
+                    line_segment_shapes.push((line_segments, shape.1))
                 }
                 (0, x, 0, 0) if x > 0 => {
-                    soft_line_segment_shapes.push(soft_line_segments)
+                    soft_line_segment_shapes.push((soft_line_segments, shape.1))
                 }
                 (0, 0, x, 0) if x > 0 => {
-                    circle_shapes.push(circles)
+                    circle_shapes.push((circles, shape.1))
                 }
                 (0, 0, 0, x) if x > 0 => {
-                    rectangle_shapes.push(rectangles)
+                    rectangle_shapes.push((rectangles, shape.1))
                 }
                 _ => {
 
@@ -2921,25 +3844,94 @@ impl Intersection for AllIntersections {
             }
         }
 
-        let line_segment_shapes = Intersection::remove_touching_shapes(&line_segment_shapes);
-        let soft_line_segment_shapes = Intersection::remove_touching_shapes(&soft_line_segment_shapes);
+        let line_segment_shapes = Intersection::remove_touching_shapes(
+            &line_segment_shapes,
+        );
+        let soft_line_segment_shapes = Intersection::remove_touching_shapes(
+            &soft_line_segment_shapes,
+        );
 
         let mut r = Vec::new();
         for shape in line_segment_shapes {
-            let item = shape.iter().map(|x| {
-                Box::from(AllIntersections::LineSegment(*(*x).clone()))
-            }).collect();
+            let item = (
+                shape.0.iter().map(|x| {
+                    AllIntersections::LineSegment((*x).clone())
+                }).collect(),
+                shape.1
+            );
             r.push(item);
         }
+
         for shape in soft_line_segment_shapes {
-            let item = shape.iter().map(|x| {
-                Box::from(AllIntersections::SoftLineSegment(*(*x).clone()))
-            }).collect();
+            let item = (
+                shape.0.iter().map(|x| {
+                    AllIntersections::SoftLineSegment((*x).clone())
+                }).collect(),
+                shape.1,
+            );
             r.push(item);
         }
 
         return r;
     }
+
+    fn find_barely_inner_point(lines: &Vec<Self>) -> Point where Self : Sized {
+        let Some(shape) = lines.first() else {
+            panic!("Could not find a shape.");
+        };
+        match shape {
+            AllIntersections::Rectangle(_) => {
+                let v : Vec<Rectangle> = lines.iter().filter_map(|x| {
+                    if let AllIntersections::Rectangle(r) = x {
+                        Some(r.clone())
+                    } else {
+                        None
+                    }
+                }).collect();
+                Intersection::find_barely_inner_point(&v)
+            }
+            AllIntersections::LineSegment(_) => {
+                let v : Vec<LineSegment> = lines.iter().filter_map(|x| {
+                    if let AllIntersections::LineSegment(l) = x {
+                        Some(l.clone())
+                    } else {
+                        None
+                    }
+                }).collect();
+                Intersection::find_barely_inner_point(&v)
+            }
+            AllIntersections::SoftLineSegment(_) => {
+                let v : Vec<LineSegment> = lines.iter().filter_map(|x| {
+                    if let AllIntersections::SoftLineSegment(l) = x {
+                        Some(l.clone())
+                    } else {
+                        None
+                    }
+                }).collect();
+                Intersection::find_barely_inner_point(&v)
+            }
+            AllIntersections::Circle(_) => {
+                let v : Vec<Circle> = lines.iter().filter_map(|x| {
+                    if let AllIntersections::Circle(c) = x {
+                        Some(c.clone())
+                    } else {
+                        None
+                    }
+                }).collect();
+                Intersection::find_barely_inner_point(&v)
+            }
+        }
+    }
+    fn force_counter_clockwise(lines: &Vec<Self>) -> Vec<Self> where Self : Sized {
+        let (rects, softs, lines, circles) = AllIntersections::seperate_vec(lines);
+        Self::join_all(
+            &Intersection::force_counter_clockwise(&rects),
+            &Intersection::force_counter_clockwise(&softs),
+            &Intersection::force_counter_clockwise(&lines),
+            &Intersection::force_counter_clockwise(&circles),
+        )
+    }
+
 }
 
 impl cnc_router::CNCPath for AllIntersections {

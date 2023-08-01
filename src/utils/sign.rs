@@ -71,46 +71,71 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
     pub fn expand_lines(
         &self,
         bit_radius: f64,
-        do_cut_on_odd: bool
+        do_cut_on_odd: bool,
+        add_padding_to: &Vec<(cnc_router::ToolType, f64)>,
     ) -> Self {
+        // if bit_radius > 0.01 {
+        //     return self.expand_lines(0.01, do_cut_on_odd, add_padding_to)
+        //         .expand_lines(bit_radius-0.01, do_cut_on_odd, &Vec::new());
+        // }
+
         let mut sign_copy = self.clone();
 
         let mut groups_of_intersections : HashMap<
             cnc_router::ToolType,
-            Vec<Vec<Box<T>>>
+            Vec<(Vec<T>, bool)>
         > = HashMap::new();
 
         for shape in &self.shapes {
-            let mut lines : Vec<&T> = Vec::new();
+            let inner_point = lines_and_curves::Intersection::find_barely_inner_point(
+                shape.lines()
+            );
+            let can_cut_inside = (sign_copy.y_values_before(
+                inner_point.x,
+                inner_point.y,
+            ) % 2 == 1) == do_cut_on_odd;
+
+            let mut lines : Vec<T> = Vec::new();
             for line in shape.lines() {
-                lines.push(line);
+                lines.push(line.clone());
             }
-            let new_lines : Vec<Box<T>> =
+            let mut addition_radius = 0.0;
+            for (p_type, p_len) in add_padding_to {
+                if p_type.is_same_type(&shape.tool_type()) {
+                    addition_radius += p_len;
+                }
+            }
+            let new_lines : Vec<(Vec<T>, bool)> =
                 lines_and_curves::Intersection::add_radius(
-                    &lines, bit_radius, Box::from(|x, y| {
-                    (sign_copy.y_values_before(x, y) % 2 == 1) == do_cut_on_odd
-                }));
+                    &shape.lines(),
+                    bit_radius + addition_radius,
+                    can_cut_inside,
+                    // Box::from(|x, y| {
+                    //     (sign_copy.y_values_before(x, y) % 2 == 1) == do_cut_on_odd
+                    // })
+                );
 
             if let Some(mut_v) = groups_of_intersections.get_mut(&shape.tool_type) {
-                mut_v.push(new_lines);
+                for lines in new_lines {
+                    mut_v.push(lines);
+                }
             } else {
-                groups_of_intersections.insert(shape.tool_type, vec![
-                    new_lines
-                ]);
+                groups_of_intersections.insert(shape.tool_type, new_lines);
             }
         }
 
         let mut shapes : Vec<Shape<T>> = Vec::new();
         for (tool_type, groups) in groups_of_intersections {
             // let mut new_group = groups
-            let mut new_group : Vec<Shape<T>> = lines_and_curves::Intersection::remove_touching_shapes(
-                &groups
-            )
+            let mut new_group : Vec<Shape<T>> =
+                lines_and_curves::Intersection::remove_touching_shapes(
+                    &groups,
+                )
                 .iter()
-                .map(|shape : &Vec<Box<T>>| {
-                    let items: Vec<T> = shape
-                        .iter().map(|x : &Box<T>| {
-                            *(*x).clone()
+                .map(|shape : &(Vec<T>, bool)| {
+                    let items: Vec<T> = shape.0
+                        .iter().map(|x : &T| {
+                            (*x).clone()
                         }).collect();
                     Shape::from(
                         tool_type,
@@ -152,6 +177,16 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         do_cut_on_odd: bool,
         can_be_equal: bool
     ) -> bool {
+        if x == 9.8125 {
+            // TODO: lately
+            // println!("X{} Y{}", x, y);
+            // println!(
+            //     "(^ before: {} equal: {})",
+            //     self.y_values_before(x, y),
+            //     self.y_values_before_or_equal(x, y),
+            // );
+        }
+
         ((self.y_values_before(x, y) % 2 == 1) == do_cut_on_odd) ||
             (can_be_equal &&
              ((self.y_values_before_or_equal(x, y) % 2 == 1) == do_cut_on_odd))
@@ -175,7 +210,7 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         return seen;
     }
 
-    pub fn get_next_y_value(&mut self, x: f64, y: f64) -> f64 {
+    pub fn get_next_y_value(&mut self, x: f64, y: f64) -> Option<f64> {
         let mut min_y = None;
         for shape in &mut self.shapes {
             match (shape.get_next_y_value(x, y), min_y) {
@@ -189,14 +224,10 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
             }
         }
 
-        if let Some(y) = min_y {
-            y
-        } else {
-            self.bounding_rect.max_y()
-        }
+        return min_y;
     }
 
-    pub fn get_prev_y_value(&mut self, x: f64, y: f64) -> f64 {
+    pub fn get_prev_y_value(&mut self, x: f64, y: f64) -> Option<f64> {
         let mut max_y = None;
         for shape in &mut self.shapes {
             match (shape.get_prev_y_value(x, y), max_y) {
@@ -210,15 +241,40 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
             }
         }
 
-        if let Some(y) = max_y {
-            y
-        } else {
-            self.bounding_rect.min_y()
-        }
+        return max_y;
+    }
+
+    pub fn get_next_y_value_bounds(&mut self, x: f64, y: f64) -> f64 {
+        self.get_next_y_value(x, y).unwrap_or(self.bounding_rect.max_y())
+    }
+
+    pub fn get_prev_y_value_bounds(&mut self, x: f64, y: f64) -> f64 {
+        self.get_prev_y_value(x, y).unwrap_or(self.bounding_rect.min_y())
     }
 
     pub fn line_collides_wth_rect(&mut self, rectangle: &lines_and_curves::Rectangle) -> bool {
         self.contains_rect.contains_rect(rectangle)
+    }
+
+    pub fn get_y_values(&mut self, x: f64) -> Vec<f64> {
+        let mut y_values = Vec::new();
+
+        for shape in &mut self.shapes {
+            shape.add_x_layer(x);
+            let new_ys : Vec<f64> = shape.get_y_values(x)
+                .iter()
+                .map(|x| (*x).clone())
+                .flatten()
+                .collect();
+            y_values.extend(
+                new_ys
+            );
+        }
+
+        y_values.push(self.bounding_rect.min_y());
+        y_values.push(self.bounding_rect.max_y());
+        y_values.sort_by(|l, r| l.partial_cmp(r).unwrap());
+        return y_values;
     }
 }
 
@@ -229,7 +285,7 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
     ) -> Self {
         Self {
             tool_type: tool_type,
-            lines: lines,
+            lines: lines_and_curves::Intersection::force_counter_clockwise(&lines),
             layers: std::collections::HashMap::new(),
         }
     }
@@ -270,14 +326,35 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
         }
         let x_index = f64_to_usize_block(x);
 
-        let mut y_values = Vec::new();
+        let mut y_values_and_is_inside = Vec::new();
         for (i, line) in self.lines.iter().enumerate() {
-            for y in line.y(&self.lines[(i+1)%self.lines.len()], x) {
-                y_values.push(y);
+            for y in line.y(&self.lines[(i+1) % self.lines.len()], x) {
+                y_values_and_is_inside.push(y);
             }
         }
 
-        y_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mut y_values = Vec::new();
+        y_values_and_is_inside.sort_by(|a, b| {
+            let result = a.0.partial_cmp(&b.0).unwrap();
+            if result == std::cmp::Ordering::Equal {
+                if a.1 == b.1 {
+                    std::cmp::Ordering::Equal
+                } else if a.1 {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                }
+            } else {
+                result
+            }
+        });
+        let mut last_is_inside = false;
+        for (y_value, is_inside) in y_values_and_is_inside {
+            if is_inside != last_is_inside {
+                y_values.push(y_value);
+                last_is_inside = is_inside;
+            }
+        }
 
         match self.layers.get_mut(&x_index) {
             Some(arr) => {
@@ -304,7 +381,6 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
                 }
             }
         }
-
         return arrays;
     }
 
