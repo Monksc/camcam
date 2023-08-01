@@ -5,6 +5,7 @@ version = 3
 [[package]]
 name = "algorithms"
 version = "0.1.0"
+source = "git+https://github.com/Monksc/algorithms_rust_lib?rev=c3bc40e#c3bc40e5532fc3cd85c3589fa89796b9cc2980c3"
 dependencies = [
  "queues",
 ]
@@ -12,7 +13,7 @@ dependencies = [
 [[package]]
 name = "algorithms"
 version = "0.1.0"
-source = "git+https://github.com/Monksc/algorithms_rust_lib?rev=c3bc40e#c3bc40e5532fc3cd85c3589fa89796b9cc2980c3"
+source = "git+https://github.com/Monksc/algorithms_rust_lib?rev=e6b3a52e3aa6b666cae9c08b7fd69f7605356b54#e6b3a52e3aa6b666cae9c08b7fd69f7605356b54"
 dependencies = [
  "queues",
 ]
@@ -36,7 +37,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 name = "camcam"
 version = "0.1.0"
 dependencies = [
- "algorithms 0.1.0",
+ "algorithms 0.1.0 (git+https://github.com/Monksc/algorithms_rust_lib?rev=e6b3a52e3aa6b666cae9c08b7fd69f7605356b54)",
  "geo-clipper",
  "geo-types 0.7.9",
  "offset-polygon",
@@ -151,6 +152,7 @@ dependencies = [
 [[package]]
 name = "range_map"
 version = "0.1.0"
+source = "git+https://github.com/Monksc/range_map?rev=3595a2162a5209c9c15a91dc02c839aeafc1b4c0#3595a2162a5209c9c15a91dc02c839aeafc1b4c0"
 dependencies = [
  "algorithms 0.1.0 (git+https://github.com/Monksc/algorithms_rust_lib?rev=c3bc40e)",
 ]
