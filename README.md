@@ -7,7 +7,7 @@ This is a cam software to generate gcode for a cnc router.
 Currenlty its just a libary just add in this line to your Cargo.toml. You can remove the rev if you want a newer version.
 ```
 [dependencies]
-camcam = {  git = "https://github.com/Monksc/camcam", rev = "f01246ec0e166fe6178d1535984c427547c27d22"}
+camcam = {  git = "https://github.com/Monksc/camcam", rev = "99d754b223d946792d01df1890b72ef76cab461a"}
 ```
 
 We have an example of how to use the libary in main.rs. 
