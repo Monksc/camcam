@@ -3,6 +3,7 @@
 use super::*;
 
 pub trait Intersection {
+    fn find_significant_xs(&self) -> Vec<f64>;
     fn y(&self, next: &Self, x: f64) -> Vec<(f64, bool)>;
     fn is_inside<
         T: Intersection
@@ -1085,8 +1086,7 @@ impl LineSegment {
     pub fn y(&self, x: f64) -> Option<f64> {
         if !self.contains_x(x) {
             None
-        }
-        else if let Some((b, m)) = self.y_intercept_and_slope() {
+        } else if let Some((b, m)) = self.y_intercept_and_slope() {
             Some(x * m + b)
         } else {
             None
@@ -2500,6 +2500,12 @@ impl LineSegment {
 }
 
 impl Intersection for LineSegment {
+    fn find_significant_xs(&self) -> Vec<f64> {
+        vec![
+            self.p1.x,
+            self.p2.x,
+        ]
+    }
     fn y(&self, next: &Self, x: f64) -> Vec<(f64, bool)> {
         let contains_x =
             (self.p1.x < self.p2.x && x >= self.p1.x && x < self.p2.x) ||
@@ -2509,7 +2515,14 @@ impl Intersection for LineSegment {
             (self.p1.x > x && self.p2.x >= x && next.p1.x >= x && next.p2.x > x) ||
             (self.p1.x < x && self.p2.x <= x && next.p1.x <= x && next.p2.x < x);
         if let Some((b, m)) = self.y_intercept_and_slope() {
-            if contains_x || (end_x && lines_on_same_side_as_x) {
+            if end_x && lines_on_same_side_as_x {
+                return vec![
+                    (self.p2.y, true),
+                ];
+            }
+            if self.p1.x == x {
+                return vec![(self.p1.y, self.p1.x < self.p2.x)];
+            } else if contains_x {
                 return vec![(m * x + b, self.p1.x < self.p2.x)];
             } else {
                 return Vec::new();
@@ -3099,6 +3112,12 @@ impl cnc_router::CNCPath for LineSegment {
 }
 
 impl Intersection for Rectangle {
+    fn find_significant_xs(&self) -> Vec<f64> {
+        vec![
+            self.min_x(),
+            self.max_x(),
+        ]
+    }
     fn y(&self, _next: &Self, x: f64) -> Vec<(f64, bool)> {
         if self.contains_x(x) {
             eprintln!("RECTANGLE USED");
@@ -3287,6 +3306,12 @@ impl cnc_router::CNCPath for Rectangle {
 }
 
 impl Intersection for Circle {
+    fn find_significant_xs(&self) -> Vec<f64> {
+        vec![
+            self.center.x - self.radius,
+            self.center.x + self.radius,
+        ]
+    }
     fn y(&self, _next: &Self, x: f64) -> Vec<(f64, bool)> {
         // X^2 + Y^2 = r^2
         // Y^2 = r^2 - X^2
@@ -3609,6 +3634,22 @@ impl Iterator for RectangleConnectionsItr {
 }
 
 impl Intersection for AllIntersections {
+    fn find_significant_xs(&self) -> Vec<f64> {
+        match self {
+            AllIntersections::Rectangle(r) => {
+                Intersection::find_significant_xs(r)
+            }
+            AllIntersections::LineSegment(s) => {
+                Intersection::find_significant_xs(s)
+            }
+            AllIntersections::SoftLineSegment(s) => {
+                Intersection::find_significant_xs(s)
+            }
+            AllIntersections::Circle(c) => {
+                Intersection::find_significant_xs(c)
+            }
+        }
+    }
     fn y(&self, next: &Self, x: f64) -> Vec<(f64, bool)> {
         match (self, next) {
             (AllIntersections::Rectangle(r1), AllIntersections::Rectangle(r2)) => {

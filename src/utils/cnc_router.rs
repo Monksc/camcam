@@ -70,8 +70,7 @@ impl ToolType {
     pub fn full_cut(self) -> bool {
         self == ToolType::FullCutBroad ||
             self == ToolType::FullCutText ||
-            self == ToolType::Braille ||
-            self == ToolType::SpaceBetweenCutBroad
+            self == ToolType::Braille
     }
 
     pub fn dont_add_cut(self) -> bool {
@@ -361,14 +360,16 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.write_gcode_command(
             "M02",
             self.verbose_string(String::from("(End of program)"))
-        )
+        );
+        self.gcode_write.flush();
     }
 
     pub fn end_program2(&mut self) {
         self.write_gcode_command(
             "M30",
             self.verbose_string(String::from("(End of program)"))
-        )
+        );
+        self.gcode_write.flush();
     }
 
     pub fn reset_program_and_end(&mut self) {
@@ -1605,8 +1606,8 @@ pub trait CNCPath {
     }
 
     fn to_path_vec(
-        items: &Vec<&Self>,
-    ) -> Vec<OptionalCoordinate> {
+        items: &Vec<Self>,
+    ) -> Vec<OptionalCoordinate> where Self : Sized {
         items.iter().map(|item| item.to_path()).flatten().collect()
     }
 
@@ -1627,7 +1628,7 @@ pub trait CNCPath {
     }
 
     fn cut_till<T: std::io::Write>(
-        items: &Vec<&Self>,
+        items: &Vec<Self>,
         x: Option<f64>,
         y: Option<f64>,
         cnc_router: &mut CNCRouter<T>,
@@ -1637,7 +1638,8 @@ pub trait CNCPath {
         z_axis_of_cut: f64, // only in effect iff force_drill
         depth_of_cut: f64, // only in effect iff force_drill
         only_cleanup: bool,
-    ) -> bool {
+        mut can_cut: Box::<impl FnMut(f64, f64) -> bool>
+    ) -> bool where Self : Sized {
         let points = CNCPath::to_path_vec(items);
 
         let mut new_points = Vec::new();
@@ -1687,8 +1689,8 @@ pub trait CNCPath {
                 let x_values = [x, start_pos.x];
                 for z in 0..(if h == 0 { 1 } else { 2 }) {
                     let x = x_values[z];
-                    if (x > new_points[j].x && new_points[i].x > x) ||
-                        (x < new_points[j].x && new_points[i].x < x)
+                    if (x >= new_points[j].x && new_points[i].x > x) ||
+                        (x <= new_points[j].x && new_points[i].x < x)
                     {
                         break 'findhigherindex;
                     }
@@ -1704,8 +1706,8 @@ pub trait CNCPath {
                 let x_values = [x, start_pos.x];
                 for z in 0..(if h == 0 { 1 } else { 2 }) {
                     let x = x_values[z];
-                    if (x > new_points[j].x && new_points[i].x > x) ||
-                        (x < new_points[j].x && new_points[i].x < x)
+                    if (x >= new_points[j].x && new_points[i].x > x) ||
+                        (x <= new_points[j].x && new_points[i].x < x)
                     {
                         break 'findlowerindex;
                     }
@@ -1739,8 +1741,8 @@ pub trait CNCPath {
                 let x_values = [x, start_pos.x];
                 for z in 0..(if h == 0 { 1 } else { 2 }) {
                     let x = x_values[z];
-                    if (x > new_points[j].x && new_points[i].x > x) ||
-                        (x < new_points[j].x && new_points[i].x < x)
+                    if (x >= new_points[j].x && new_points[i].x > x) ||
+                        (x <= new_points[j].x && new_points[i].x < x)
                     {
                         let line = lines_and_curves::LineSegment::from(
                             new_points[i],
@@ -1767,6 +1769,9 @@ pub trait CNCPath {
                     ),
                     feed_rate, false,
                 );
+                if !can_cut(new_points[j].x, new_points[j].y) {
+                    return true;
+                }
             }
         } else if let Some(y) = y {
 

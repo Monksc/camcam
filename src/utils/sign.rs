@@ -177,19 +177,27 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         do_cut_on_odd: bool,
         can_be_equal: bool
     ) -> bool {
-        if x == 9.8125 {
-            // TODO: lately
-            // println!("X{} Y{}", x, y);
-            // println!(
-            //     "(^ before: {} equal: {})",
-            //     self.y_values_before(x, y),
-            //     self.y_values_before_or_equal(x, y),
-            // );
-        }
+        // TODO Should not have to check + epsilon.
+        // Should fix actual issue consisting of Intersection::y(x) for
+        // LineSegment on lines where two lines connect on one side of x given
+        // and on straight lines.
+        let epsilon = 0.00000001;
+        self.sees_even_odd_lines_before_helper(x, y, do_cut_on_odd, can_be_equal) +
+            self.sees_even_odd_lines_before_helper(x+epsilon, y, do_cut_on_odd, can_be_equal) +
+            self.sees_even_odd_lines_before_helper(x-epsilon, y, do_cut_on_odd, can_be_equal)
+        >= 2
+    }
 
-        ((self.y_values_before(x, y) % 2 == 1) == do_cut_on_odd) ||
+    pub fn sees_even_odd_lines_before_helper(
+        &mut self,
+        x: f64, y: f64,
+        do_cut_on_odd: bool,
+        can_be_equal: bool
+    ) -> usize {
+        if ((self.y_values_before(x, y) % 2 == 1) == do_cut_on_odd) ||
             (can_be_equal &&
              ((self.y_values_before_or_equal(x, y) % 2 == 1) == do_cut_on_odd))
+        { 1 } else { 0 }
     }
 
     pub fn y_values_before(&mut self, x: f64, y: f64) -> usize {
@@ -276,6 +284,18 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         y_values.sort_by(|l, r| l.partial_cmp(r).unwrap());
         return y_values;
     }
+
+    pub fn get_significant_xs(&self) -> Vec<f64> {
+        let mut xs : Vec<f64> = self.shapes.iter()
+            .map(
+                |x| x.get_significant_xs()
+            )
+            .flatten()
+            .collect();
+
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        return xs;
+    }
 }
 
 impl<T: lines_and_curves::Intersection> Shape<T> {
@@ -348,6 +368,7 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
                 result
             }
         });
+
         let mut last_is_inside = false;
         for (y_value, is_inside) in y_values_and_is_inside {
             if is_inside != last_is_inside {
@@ -448,6 +469,16 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
         }
 
         return max_y;
+    }
+
+    fn get_significant_xs(&self) -> Vec<f64> {
+        self.lines
+            .iter()
+            .map(
+                |x| x.find_significant_xs()
+            )
+            .flatten()
+            .collect()
     }
 }
 
