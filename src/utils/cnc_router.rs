@@ -34,25 +34,42 @@ pub struct CNCRouter<T: std::io::Write> {
     exact_stop_change_y: bool,
 }
 
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub enum ToolType {
     FullCutBroad,
     PartialCutBroad,
-    SpaceBetweenCutBroad,
+    SpaceBetweenCutBroad(f64),
     DontAddCutBroad,
     FullCutText,
-    PartialCutText,
+    PartialCutText(f64, f64), // angle, max length of cut
     Braille,
 }
+
+impl PartialEq for ToolType {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw_value() == other.raw_value()
+    }
+}
+impl Eq for ToolType {}
+impl std::hash::Hash for ToolType {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: std::hash::Hasher,
+    {
+        state.write_i32(self.raw_value() as i32);
+        state.finish();
+    }
+}
+
 impl ToolType {
     pub fn description(&self) -> String {
         match self {
             ToolType::FullCutBroad => String::from("Full Cut Broad"),
             ToolType::PartialCutBroad => String::from("Partial Cut Broad"),
-            ToolType::SpaceBetweenCutBroad => String::from("Space Between Cut Broad"),
+            ToolType::SpaceBetweenCutBroad(_) => String::from("Space Between Cut Broad"),
             ToolType::DontAddCutBroad => String::from("Don't Add Cut Broad"),
             ToolType::FullCutText => String::from("Full Cut Text"),
-            ToolType::PartialCutText => String::from("Partial Cut Text"),
+            ToolType::PartialCutText(_, _) => String::from("Partial Cut Text"),
             ToolType::Braille => String::from("Braille"),
         }
     }
@@ -60,10 +77,10 @@ impl ToolType {
         match self {
             ToolType::FullCutBroad => 0,
             ToolType::PartialCutBroad => 1,
-            ToolType::SpaceBetweenCutBroad => 2,
+            ToolType::SpaceBetweenCutBroad(_) => 2,
             ToolType::DontAddCutBroad => 3,
             ToolType::FullCutText => 4,
-            ToolType::PartialCutText => 5,
+            ToolType::PartialCutText(_, _) => 5,
             ToolType::Braille => 6,
         }
     }
@@ -79,7 +96,9 @@ impl ToolType {
 
     pub fn is_text(self) -> bool {
         ToolType::FullCutText == self ||
-        ToolType::PartialCutText == self
+        if let ToolType::PartialCutText(_, _) = self {
+            true
+        } else { false }
     }
 
     pub fn is_braille(self) -> bool {
@@ -89,7 +108,11 @@ impl ToolType {
     pub fn is_broad(self) -> bool {
         ToolType::FullCutBroad == self ||
         ToolType::PartialCutBroad == self ||
-        ToolType::SpaceBetweenCutBroad == self ||
+        if let ToolType::SpaceBetweenCutBroad(_) = self {
+            true
+        } else {
+            false
+        } ||
         ToolType::DontAddCutBroad == self
     }
 
@@ -236,6 +259,10 @@ impl <T: std::io::Write> CNCRouter<T> {
 
     pub fn get_point(&self) -> lines_and_curves::Point {
         lines_and_curves::Point::from(self.pos.x, self.pos.y)
+    }
+
+    pub fn get_feed_rate(&self) -> f64 {
+        self.feed_rate
     }
 
     pub fn set_verbose(&mut self, verbose: bool) {
@@ -1637,7 +1664,9 @@ pub trait CNCPath {
         feed_rate_of_drill: f64, // only in effect iff force_drill
         z_axis_of_cut: f64, // only in effect iff force_drill
         depth_of_cut: f64, // only in effect iff force_drill
-        only_cleanup: bool,
+        tool_type: &ToolType,
+        tool_radius: f64,
+        cut_inside: bool,
         mut can_cut: Box::<impl FnMut(f64, f64) -> bool>
     ) -> bool where Self : Sized {
         let points = CNCPath::to_path_vec(items);
@@ -1653,7 +1682,7 @@ pub trait CNCPath {
         if new_points.len() < 3 {
             return false;
         }
-        new_points.push(new_points[0]);
+        // new_points.push(new_points[0]);
         if let Some(x) = x {
             let start_pos = cnc_router.get_pos();
             let mut start_index = 0;
@@ -1715,18 +1744,6 @@ pub trait CNCPath {
                 lower_distance += new_points[i].distance_to(&new_points[j]);
             }
 
-            // let higher_diff = if higher_closer_index >= start_index {
-            //     higher_closer_index - start_index
-            // } else {
-            //     new_points.len() - start_index + higher_closer_index
-            // };
-
-            // let lower_diff = if lower_closer_index <= start_index {
-            //     start_index - lower_closer_index
-            // } else {
-            //     new_points.len() + start_index - lower_closer_index
-            // };
-
             let should_go_higher = higher_distance <= lower_distance;
 
             for h in 0..new_points.len() {
@@ -1775,7 +1792,7 @@ pub trait CNCPath {
             }
         } else if let Some(y) = y {
 
-        } else if only_cleanup {
+        } else if let ToolType::PartialCutText(max_angle, previous_radius) = tool_type {
             let mut is_up = true;
             for i in 0..new_points.len() {
                 let j = (i+1) % new_points.len();
@@ -1786,7 +1803,16 @@ pub trait CNCPath {
                     &new_points[j],
                     &new_points[k],
                 );
-                if angle >= std::f64::consts::PI {
+
+                let angle = if cut_inside {
+                    2.0 * std::f64::consts::PI - angle
+                } else {
+                    angle
+                };
+
+                if angle.is_nan() ||
+                    angle >= std::f64::consts::PI ||
+                    (*max_angle > 0.0 && angle >= *max_angle) {
                     if !is_up {
                         cnc_router.move_to_optional_coordinate(
                             &cnc_router::OptionalCoordinate::from_z(
@@ -1799,13 +1825,42 @@ pub trait CNCPath {
                     continue;
                 }
 
-                let mid_ij = (new_points[i] + new_points[j]) / 2.0;
-                let mid_jk = (new_points[j] + new_points[k]) / 2.0;
+                let length_from_point_j = (*previous_radius - tool_radius) / (angle / 2.0).tan();
+
+                let dji = (new_points[i] - new_points[j]).normalize();
+                let djk = (new_points[k] - new_points[j]).normalize();
+
+                let ij_point = if length_from_point_j >
+                    new_points[i].distance_to(&new_points[j]) {
+                    dji * new_points[i].distance_to(&new_points[j]) + new_points[j]
+                } else {
+                    dji * length_from_point_j + new_points[j]
+                };
+                let jk_point = if length_from_point_j >
+                    new_points[k].distance_to(&new_points[j]) {
+                    djk * new_points[k].distance_to(&new_points[j]) + new_points[j]
+                } else {
+                    djk * length_from_point_j + new_points[j]
+                };
+
+                if !is_up && cnc_router.get_point().distance_to(
+                    &ij_point
+                ) * feed_rate.unwrap_or(cnc_router.get_feed_rate()) > (
+                    2.0 * feed_rate_of_drill * depth_of_cut
+                ).abs() {
+                    cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(z_axis_of_cut)
+                        ),
+                        Some(feed_rate_of_drill), false,
+                    );
+                    is_up = true;
+                }
 
                 if is_up {
                     cnc_router.move_to_coordinate_rapid(
                         &cnc_router::Coordinate::from(
-                            mid_ij.x, mid_ij.y, z_axis_of_cut
+                            ij_point.x, ij_point.y, z_axis_of_cut
                         )
                     );
 
@@ -1828,14 +1883,15 @@ pub trait CNCPath {
                 );
                 cnc_router.move_to_optional_coordinate(
                     &OptionalCoordinate::from(
-                        Some(mid_jk.x),
-                        Some(mid_jk.y),
+                        Some(jk_point.x),
+                        Some(jk_point.y),
                         None,
                     ),
                     feed_rate, false,
                 );
             }
         } else {
+            new_points.push(new_points[0]);
             if force_drill {
                 cnc_router.move_to_coordinate_rapid(
                     &cnc_router::Coordinate::from(

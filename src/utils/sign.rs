@@ -68,6 +68,17 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         &self.shapes
     }
 
+    pub fn shapes_cut_inside(&mut self, do_cut_on_odd: bool) -> Vec<(Shape<T>, bool)> {
+        let mut new_shapes = Vec::new();
+        for i in 0..self.shapes.len() {
+            let shape = self.shapes[i].clone();
+            let point = lines_and_curves::Intersection::find_barely_inner_point(shape.lines());
+            let cut_inside = self.sees_even_odd_lines_before(point.x, point.y, do_cut_on_odd, false);
+            new_shapes.push((shape, cut_inside));
+        }
+        return new_shapes;
+    }
+
     pub fn expand_lines(
         &self,
         bit_radius: f64,
@@ -607,7 +618,7 @@ mod test {
             ),
             vec![
                 sign::Shape::from(
-                    cnc_router::ToolType::Text,
+                    cnc_router::ToolType::FullCutText,
                     lines_and_curves::LineSegment::create_path(&vec![
                         lines_and_curves::Point::from(17.5, 15.0),
                         lines_and_curves::Point::from(20.0, 17.5),

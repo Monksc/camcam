@@ -248,7 +248,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
         self.cnc_router.write_gcode_comment_str("Following Shapes");
         for tool_type in vec![
             cnc_router::ToolType::FullCutText,
-            cnc_router::ToolType::PartialCutText,
+            cnc_router::ToolType::PartialCutText(0.0, 0.0),
             cnc_router::ToolType::Braille
         ] {
             for (tool_index, tool) in tools.iter().enumerate() {
@@ -487,6 +487,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
         signs : &Vec<sign::Sign<J> >,
         add_padding_to: &Vec<(cnc_router::ToolType, f64)>,
     ) {
+
         unsafe {
             clone_time = std::time::Duration::new(0, 0);
             cut_broad_path_time = std::time::Duration::new(0, 0);
@@ -532,18 +533,24 @@ impl <T: std::io::Write> GCodeCreator<T> {
                     }
 
                     let mut thick_sign = sign.clone();
-                    if cnc_router::ToolType::SpaceBetweenCutBroad == tool.tool_type() {
+                    if let cnc_router::ToolType::SpaceBetweenCutBroad(override_thinest_radius)
+                        = tool.tool_type() {
+
+                        let bigger_radius = if override_thinest_radius == 0.0 {
+                            thinnest_radius_seen
+                        } else {
+                            override_thinest_radius
+                        };
+
                         thick_sign = thick_sign.expand_lines(
-                            thinnest_radius_seen, do_cut_on_odd, add_padding_to,
+                            bigger_radius, do_cut_on_odd, add_padding_to,
                         );
                         thick_sign = thick_sign.expand_lines(
-                            tool.radius - thinnest_radius_seen, do_cut_on_odd, &Vec::new(),
+                            tool.radius - bigger_radius, do_cut_on_odd, &Vec::new(),
                         );
                     }
 
                     let mut zero_range = range_map::FillRect::from(
-                        // sign.bounding_rect().min_x()+thinnest_radius_seen, sign.bounding_rect().min_y()+thinnest_radius_seen,
-                        // sign.bounding_rect().max_x()-thinnest_radius_seen, sign.bounding_rect().max_y()-thinnest_radius_seen
                         sign.bounding_rect().min_x(), sign.bounding_rect().min_y(),
                         sign.bounding_rect().max_x(), sign.bounding_rect().max_y()
                     );
@@ -551,13 +558,13 @@ impl <T: std::io::Write> GCodeCreator<T> {
                     self.broad_smart_path2(
                         do_cut_on_odd,
                         &mut sign.expand_lines(tool.radius, do_cut_on_odd, &add_padding_to),
-                        if cnc_router::ToolType::SpaceBetweenCutBroad == tool.tool_type() {
+                        if let cnc_router::ToolType::SpaceBetweenCutBroad(_) = tool.tool_type() {
                             Some(&mut thick_sign)
                         } else {
                             None
                         },
                         tool,
-                        if cnc_router::ToolType::SpaceBetweenCutBroad == tool.tool_type() {
+                        if let cnc_router::ToolType::SpaceBetweenCutBroad(_) = tool.tool_type() {
                             &mut zero_range
                         } else {
                             &mut fill_rect
@@ -572,15 +579,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 self.cut_text(
                     do_cut_on_odd,
                     signs,
-                    // &signs.iter()
-                    //     .map(
-                    //         |sign|
-                    //         sign.expand_lines(
-                    //             0.25, do_cut_on_odd, &add_padding_to,
-                    //         ).expand_lines(
-                    //             tool.radius - 0.25, do_cut_on_odd, &Vec::new(),
-                    //         )
-                    //     ).collect(),
                     add_padding_to,
                     tool,
                     tool_index,
@@ -695,6 +693,8 @@ impl <T: std::io::Write> GCodeCreator<T> {
                             tool.feed_rate_of_drill,
                             self.z_axis_off_cut,
                             self.depth_of_cut,
+                            &tool.tool_type(),
+                            tool.radius,
                             false,
                             Box::from(|x, y| {
                                 methods(CutBroadSmartPathMethodArguments::CanCut(x, y)).can_cut()
@@ -975,45 +975,39 @@ impl <T: std::io::Write> GCodeCreator<T> {
         tool: &cnc_router::Tool,
         tool_index: usize,
     ) {
-        // let tools = self.cnc_router.get_tools().clone();
-        // for (tool_index, tool) in tools.iter().enumerate() {
-        //     if !tool.is_text_or_braille() { continue }
-            // self.cnc_router.set_tool_and_go_home(tool_index, tool.feed_rate_of_cut);
-            // self.cnc_router.set_spindle_on(false, self.spindle_speed);
+        for sign in signs {
 
-            for sign in signs {
-
-                let sign = sign.expand_lines(tool.radius, do_cut_on_odd, add_padding_to);
-                let shapes = sign.shapes().clone();
-                for shape in shapes {
-                    if !shape.tool_type().is_same_type(&tool.tool_type()) {
-                        continue;
-                    }
-
-                    cnc_router::CNCPath::cut_till::<T>(
-                       shape.lines(),
-                        None,
-                        None,
-                        &mut self.cnc_router,
-                        Some(tool.feed_rate_of_cut),
-                        true,
-                        tool.feed_rate_of_drill,
-                        self.z_axis_off_cut+tool.length,
-                        self.depth_of_cut+tool.length,
-                        !tool.tool_type().full_cut(),
-                        Box::from(|x, y| true),
-                    );
-
-                    self.cnc_router.move_to_optional_coordinate(
-                        &cnc_router::OptionalCoordinate::from_z(
-                            Some(self.z_axis_off_cut)
-                        ),
-                        Some(tool.feed_rate_of_drill), false,
-                    );
+            let mut sign = sign.expand_lines(tool.radius, do_cut_on_odd, add_padding_to);
+            let shapes = sign.shapes_cut_inside(do_cut_on_odd);
+            for (shape, cut_inside) in shapes {
+                if !shape.tool_type().is_same_type(&tool.tool_type()) {
+                    continue;
                 }
+
+                cnc_router::CNCPath::cut_till::<T>(
+                    shape.lines(),
+                    None,
+                    None,
+                    &mut self.cnc_router,
+                    Some(tool.feed_rate_of_cut),
+                    true,
+                    tool.feed_rate_of_drill,
+                    self.z_axis_off_cut+tool.length,
+                    self.depth_of_cut+tool.length,
+                    &tool.tool_type(),
+                    tool.radius,
+                    cut_inside,
+                    Box::from(|x, y| true),
+                );
+
+                self.cnc_router.move_to_optional_coordinate(
+                    &cnc_router::OptionalCoordinate::from_z(
+                        Some(self.z_axis_off_cut)
+                    ),
+                    Some(tool.feed_rate_of_drill), false,
+                );
             }
-            // self.cnc_router.set_spindle_off();
-        // }
+        }
     }
 
     pub fn get_router(&self) -> &cnc_router::CNCRouter<T> {

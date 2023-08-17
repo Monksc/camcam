@@ -135,7 +135,7 @@ fn main() {
                 front_angle: 0.0,
                 back_angle: 0.0,
                 orientation: 0.0,
-                tool_type: cnc_router::ToolType::SpaceBetweenCutBroad,
+                tool_type: cnc_router::ToolType::SpaceBetweenCutBroad(0.0),
                 // smoothness: cnc_router::Smoothness::Medium,
                 smoothness:        cnc_router::Smoothness::Finish,
                 feed_rate_of_cut: feed_rate_of_cut,
@@ -167,8 +167,7 @@ fn main() {
                 front_angle: 0.0,
                 back_angle: 0.0,
                 orientation: 0.0,
-                tool_type: cnc_router::ToolType::FullCutText,
-                // smoothness: cnc_router::Smoothness::Medium,
+                tool_type: cnc_router::ToolType::PartialCutText(0.0, 0.5 / 2.0),
                 smoothness:        cnc_router::Smoothness::Finish,
                 feed_rate_of_cut: feed_rate_of_cut,
                 feed_rate_of_drill: feed_rate_of_drill,
@@ -326,7 +325,6 @@ fn main() {
     ];
     */
 
-    /*
     // Tight right V
     let shapes = &mut vec![
         sign::Sign::from(
@@ -352,9 +350,9 @@ fn main() {
             ],
         ),
     ];
-    */
 
     // Tight Left V
+    /*
     let shapes = &mut vec![
         sign::Sign::from(
             lines_and_curves::Rectangle::from(
@@ -379,6 +377,7 @@ fn main() {
             ],
         ),
     ];
+    */
 
     // Tight Downward V
     /*
