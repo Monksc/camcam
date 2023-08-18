@@ -11,6 +11,7 @@ fn format_float(x: f64) -> String {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 enum SpindleState {
     Off,
     Clockwise,
@@ -207,6 +208,25 @@ impl <T: std::io::Write> CNCRouter<T> {
         }
     }
 
+    pub fn to_new_write<W: std::io::Write>(&self, w : W) -> CNCRouter<W> {
+        CNCRouter::<W> {
+            tools: self.tools.clone(),
+            current_tool_index: self.current_tool_index,
+            pos: self.pos.clone(),
+            verbose: self.verbose,
+            home_pos: self.home_pos.clone(),
+            referance_pos: self.referance_pos.clone(),
+            second_referance_pos: self.second_referance_pos.clone(),
+            spindle_state: self.spindle_state,
+            spindle_clock_speed: self.spindle_clock_speed,
+            is_flood_colant_on: self.is_flood_colant_on,
+            gcode_write: w,
+            last_command: self.last_command.clone(),
+            feed_rate: self.feed_rate,
+            exact_stop_change_y: self.exact_stop_change_y,
+        }
+    }
+
     fn format_float(&self, x: f64) -> String {
         format_float(x)
     }
@@ -323,6 +343,11 @@ impl <T: std::io::Write> CNCRouter<T> {
         }
     }
 
+    pub fn write_gcode_string_no_line(&mut self, str: String) {
+        self.gcode_write.write((str).as_bytes())
+            .expect(ERROR_MSG_COULD_NOT_WRITE);
+    }
+
     pub fn write_gcode_string(&mut self, str: String) {
         self.gcode_write.write((str+"\n").as_bytes())
             .expect(ERROR_MSG_COULD_NOT_WRITE);
@@ -339,6 +364,11 @@ impl <T: std::io::Write> CNCRouter<T> {
             format!("{}{}", c, line)
         )
     }
+
+    pub fn force_flush_gcode(&mut self) {
+        self.gcode_write.flush();
+    }
+
 
     pub fn clear_gcode_command(&mut self) {
         self.last_command = String::new();
