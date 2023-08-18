@@ -18,4 +18,4 @@ ordered-float = "3.4.0"
 offset-polygon = "0.1.0"
 geo-clipper = "0.7.3"
 geo-types = "0.7.3"
-
+serde = { version = "1.0.183", features = ["derive"] }

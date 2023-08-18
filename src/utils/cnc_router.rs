@@ -1,5 +1,6 @@
 // #![allow(dead_code)]
 use super::*;
+use serde::{Serialize, Deserialize};
 
 static ERROR_MSG_COULD_NOT_WRITE: &str = "Could not write in cnc_router.";
 
@@ -35,7 +36,7 @@ pub struct CNCRouter<T: std::io::Write> {
     exact_stop_change_y: bool,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum ToolType {
     FullCutBroad,
     PartialCutBroad,
@@ -128,7 +129,7 @@ impl ToolType {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Smoothness {
     Rough,
     Medium,
@@ -156,7 +157,7 @@ impl std::fmt::Display for Smoothness {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,
     pub index_in_machine: usize,
@@ -173,14 +174,14 @@ pub struct Tool {
     pub offset: f64,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Coordinate {
     pub x: f64,
     pub y: f64,
     pub z: f64
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OptionalCoordinate {
     pub x: Option<f64>,
     pub y: Option<f64>,
