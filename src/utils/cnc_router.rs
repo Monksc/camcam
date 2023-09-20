@@ -172,6 +172,9 @@ pub struct Tool {
     pub feed_rate_of_cut: f64,
     pub feed_rate_of_drill: f64,
     pub offset: f64,
+    pub pre_cut_gcode: String,
+    pub force_retouch_off: bool,
+    pub suggested_length: f64,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
@@ -243,12 +246,12 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.format_command(String::from(new_command))
     }
 
-    pub fn generate_header(&mut self, use_inches: bool) {
+    pub fn generate_header(&mut self, use_inches: bool, name: &str) {
         self.write_gcode_str(
-            "(Using G0 which travels along dogleg path.)"
+            "%"
         );
         self.write_gcode_str(
-            "O89712 (The Square)"
+            &name
         );
         for i in 0..self.tools.len() {
             self.write_gcode_string(format!(
@@ -414,6 +417,21 @@ impl <T: std::io::Write> CNCRouter<T> {
         );
     }
 
+    pub fn reset_home_and_return(&mut self) {
+        self.write_gcode_command(
+            "G53",
+            "G0 Z0."
+        );
+        self.write_gcode_command(
+            "X4.3125",
+            "",
+        );
+        self.write_gcode_command(
+            "G53",
+            "G0 Y0."
+        );
+    }
+
     pub fn end_program(&mut self) {
         self.write_gcode_command(
             "M02",
@@ -427,6 +445,9 @@ impl <T: std::io::Write> CNCRouter<T> {
             "M30",
             self.verbose_string(String::from("(End of program)"))
         );
+        self.write_gcode_str(
+            "%"
+        );
         self.gcode_write.flush();
     }
 
@@ -435,6 +456,7 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.go_home();
         // self.program_stop();
         // self.end_program();
+        self.reset_home_and_return();
         self.end_program2();
     }
 
@@ -513,6 +535,7 @@ impl <T: std::io::Write> CNCRouter<T> {
     }
 
     pub fn set_accuracy_control(&mut self, smoothness: Smoothness) {
+        // Have to add in E{} Max corner rounding value
         self.write_gcode_command(
             "G187",
             format!("{}{}", smoothness,
@@ -521,7 +544,28 @@ impl <T: std::io::Write> CNCRouter<T> {
         )
     }
 
-    pub fn set_tool_and_go_home(&mut self, tool_index: usize, feed_rate: f64) {
+    pub fn touch_off_tool(&mut self, suggested_length: f64) {
+        self.write_gcode_str("G00 G17 G40 G49 G80 G90");
+        self.write_gcode_str("#[10400+#4120]=#[10200+#4120] (Copy from 10201 to 10401 )");
+        self.write_gcode_str("#[10200+#4120]=#[10000+#4120] (Copy from 10001 to 10201 )");
+        self.write_gcode_string(
+            format!(
+                "G65 P9995 A0. B1. C2. T{}. E{:.3} D0.( Msr Length )",
+                self.tools[self.current_tool_index].index_in_machine,
+                suggested_length,
+            ));
+        self.write_gcode_str("#[10000+#4120]=#[2000+#4120] (Copy H Geom. to 10001 )");
+        self.write_gcode_str("M01");
+    }
+
+    pub fn set_tool_and_go_home(
+        &mut self,
+        tool_index: usize,
+        feed_rate: f64,
+        pre_cut_gcode: &str,
+        should_touch_off_tool: bool,
+        suggested_length: f64,
+    ) {
         self.current_tool_index = tool_index;
         self.go_home();
         self.write_gcode_str("");
@@ -541,7 +585,9 @@ impl <T: std::io::Write> CNCRouter<T> {
             self.tools[tool_index].offset_length,
             feed_rate
         );
-        // self.write_gcode_string(format!("G54"));
+        self.touch_off_tool(suggested_length);
+        self.write_gcode_str(pre_cut_gcode);
+        self.write_gcode_command("G54", self.verbose_str(" (Change 0 coordinate)"));
     }
 
     pub fn get_tools(&self) -> &Vec<Tool> {
@@ -1348,6 +1394,9 @@ impl Tool {
         feed_rate_of_cut: f64,
         feed_rate_of_drill: f64,
         offset: f64,
+        pre_cut_gcode: String,
+        force_retouch_off: bool,
+        suggested_length: f64,
     ) -> Tool {
         Tool {
             name: name,
@@ -1363,6 +1412,9 @@ impl Tool {
             feed_rate_of_cut: feed_rate_of_cut,
             feed_rate_of_drill: feed_rate_of_drill,
             offset: offset,
+            pre_cut_gcode: pre_cut_gcode,
+            force_retouch_off: force_retouch_off,
+            suggested_length: suggested_length,
         }
     }
 
@@ -1856,7 +1908,10 @@ pub trait CNCPath {
                     continue;
                 }
 
-                let length_from_point_j = (*previous_radius - tool_radius) / (angle / 2.0).tan();
+                // TODO: Maybe it should be (*previous_radius - tool_radius)
+                // or length - tool_radius
+                // let length_from_point_j = (*previous_radius - tool_radius) / (angle / 2.0).tan();
+                let length_from_point_j = *previous_radius / (angle / 2.0).tan();
 
                 let dji = (new_points[i] - new_points[j]).normalize();
                 let djk = (new_points[k] - new_points[j]).normalize();

@@ -1,0 +1,7 @@
+1) Speed up the small bits. Maybe only check x values with the points
+    or check x values of points +- half of increment value. Currently
+    does both and checks wayyy too many xs as every point it adds an x so 
+    it can increase by only 1/1000 of increment at a time.
+2) Make use of RefCell for caching
+3) Remove statics.
+4) Prepare next tool to be used after a tool switch

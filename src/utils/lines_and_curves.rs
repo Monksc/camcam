@@ -753,15 +753,39 @@ impl LineSegment {
         return lines;
     }
 
+    pub fn from_remove_unnecessary_points(lines: &Vec<Self>) -> Vec<Self> {
+        let points = Self::points(lines, false);
+        let mut new_points = Vec::new();
+        if points.len() == 0 { return Vec::new(); }
+        for i in 0..points.len() {
+            let i_next = (i+1) % points.len();
+            let i_prev = (i+points.len()-1) % points.len();
+            if points[i] == points[i_next] ||
+                (Point::right_angle(
+                    &points[i_prev],
+                    &points[i],
+                    &points[i_next],
+                ) - std::f64::consts::PI).abs() < 0.00001
+            {
+                continue;
+            }
+
+            new_points.push(points[i]);
+        }
+
+        Self::from_points(&new_points)
+    }
+
     pub fn from_line_to_line_counter_clockwise(lines: &Vec<Self>) -> Vec<Self> {
+        let lines = Self::from_remove_unnecessary_points(lines);
         let area = Point::area(
             &lines.iter().map(|x| x.p1).collect()
         );
 
         if area < 0.0 {
-            Self::from_lines_flipped(lines)
+            Self::from_lines_flipped(&lines)
         } else {
-            lines.clone()
+            lines
         }
     }
 
@@ -3973,7 +3997,7 @@ impl Intersection for AllIntersections {
         }
     }
     fn force_counter_clockwise(lines: &Vec<Self>) -> Vec<Self> where Self : Sized {
-        let (rects, softs, lines, circles) = AllIntersections::seperate_vec(lines);
+        let (rects, lines, softs, circles) = AllIntersections::seperate_vec(lines);
         Self::join_all(
             &Intersection::force_counter_clockwise(&rects),
             &Intersection::force_counter_clockwise(&softs),
@@ -4056,6 +4080,102 @@ impl cnc_router::CNCPath for AllIntersections {
             AllIntersections::Circle(c) => {
                 c.follow_path(&mut cnc_router, feed_rate)
             }
+        }
+    }
+
+    fn cut_till<T: std::io::Write>(
+        items: &Vec<Self>,
+        x: Option<f64>,
+        y: Option<f64>,
+        cnc_router: &mut cnc_router::CNCRouter<T>,
+        feed_rate: Option<f64>,
+        force_drill: bool, // can only be true if x and y is none
+        feed_rate_of_drill: f64, // only in effect iff force_drill
+        z_axis_of_cut: f64, // only in effect iff force_drill
+        depth_of_cut: f64, // only in effect iff force_drill
+        tool_type: &cnc_router::ToolType,
+        tool_radius: f64,
+        cut_inside: bool,
+        mut can_cut: Box::<impl FnMut(f64, f64) -> bool>,
+    ) -> bool where Self : Sized {
+        let (rects, lines, softs, circles) = AllIntersections::seperate_vec(items);
+
+        if rects.len() > 0 && (
+            if let Some(_) = x { true } else { false } ||
+            if let Some(_) = y { true } else { false }
+        ) {
+            cnc_router::CNCPath::cut_till(
+                &rects,
+                x,
+                y,
+                cnc_router,
+                feed_rate,
+                force_drill,
+                feed_rate_of_drill,
+                z_axis_of_cut,
+                depth_of_cut,
+                tool_type,
+                tool_radius,
+                cut_inside,
+                can_cut,
+            )
+        }
+        else if softs.len() > 0 && (
+            if let Some(_) = x { true } else { false } ||
+            if let Some(_) = y { true } else { false }
+        ) {
+            cnc_router::CNCPath::cut_till(
+                &softs,
+                x,
+                y,
+                cnc_router,
+                feed_rate,
+                force_drill,
+                feed_rate_of_drill,
+                z_axis_of_cut,
+                depth_of_cut,
+                tool_type,
+                tool_radius,
+                cut_inside,
+                can_cut,
+            )
+        }
+        else if lines.len() > 0 {
+            cnc_router::CNCPath::cut_till(
+                &lines,
+                x,
+                y,
+                cnc_router,
+                feed_rate,
+                force_drill,
+                feed_rate_of_drill,
+                z_axis_of_cut,
+                depth_of_cut,
+                tool_type,
+                tool_radius,
+                cut_inside,
+                can_cut,
+            )
+        }
+        else if circles.len() > 0 {
+            cnc_router::CNCPath::cut_till(
+                &circles,
+                x,
+                y,
+                cnc_router,
+                feed_rate,
+                force_drill,
+                feed_rate_of_drill,
+                z_axis_of_cut,
+                depth_of_cut,
+                tool_type,
+                tool_radius,
+                cut_inside,
+                can_cut,
+            )
+        }
+        else {
+            false
         }
     }
 }
