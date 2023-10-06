@@ -12,7 +12,7 @@ edition = "2021"
 [dependencies]
 algorithms = { git = "https://github.com/Monksc/algorithms_rust_lib", rev = "e6b3a52e3aa6b666cae9c08b7fd69f7605356b54" }
 #algorithms = { path = "../algorithms_rust_lib/" }
-range_map = { git = "https://github.com/Monksc/range_map", rev = "3595a2162a5209c9c15a91dc02c839aeafc1b4c0" }
+range_map = { git = "https://github.com/Monksc/range_map", rev = "dd7b6b1c5c0f4bda2d23fd242fe281091cd5cfb6" }
 #range_map = { path = "../range_map/" }
 ordered-float = "3.4.0"
 offset-polygon = "0.1.0"

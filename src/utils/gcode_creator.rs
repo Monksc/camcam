@@ -28,10 +28,6 @@ pub struct GCodeCreator<T : std::io::Write> {
     depth_of_cut: f64,
 }
 
-// TODO: Remove these lines
-static mut clone_time : std::time::Duration = std::time::Duration::new(0, 0);
-static mut cut_broad_path_time : std::time::Duration = std::time::Duration::new(0, 0);
-
 enum CutBroadSmartPathMethodArguments {
     CanCut(f64, f64),
     MaxY(f64, f64),
@@ -499,7 +495,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
         );
 
         let mut cleared = false;
-        let mut count = 0.5;
         while !cleared {
             cleared = true;
             for (min_x, min_y, max_x, max_y) in fill_rect.get_open_rects() {
@@ -513,12 +508,8 @@ impl <T: std::io::Write> GCodeCreator<T> {
                     do_cut_on_odd, &mut sign, tool, &rect, &mut fill_rect
                 ) {
                     fill_rect.fill_rect(min_x, min_y, max_x, max_y);
-                    // cleared = true;
-                    // break;
                 }
             }
-
-            count += 0.001;
         }
     }
 
@@ -598,7 +589,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 &signs,
                 &add_padding_to,
                 &tool,
-                tool_index,
             );
         }
         self.cnc_router.set_spindle_off();
@@ -629,10 +619,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
         use std::time::Instant;
         let begining = Instant::now();
 
-        unsafe {
-            clone_time = std::time::Duration::new(0, 0);
-            cut_broad_path_time = std::time::Duration::new(0, 0);
-        }
         let mut fill_rects = Vec::new();
 
         for sign in signs {
@@ -683,18 +669,12 @@ impl <T: std::io::Write> GCodeCreator<T> {
         }
 
         self.cnc_router.reset_program_and_end();
-
-        unsafe {
-            eprintln!("Clone Time: {:?}", clone_time);
-            eprintln!("Cut   Time: {:?}", cut_broad_path_time);
-            eprintln!("Smart Time: {:?}", begining.elapsed());
-        }
     }
 
 
     // MARK: Smart method 2
 
-    pub fn cut_broad_smart_path2<
+    fn cut_broad_smart_path2<
         J : lines_and_curves::Intersection +
         std::fmt::Debug + Clone + cnc_router::CNCPath
     > (
@@ -925,12 +905,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
         let increment = 2.0 * tool.radius * tool.offset;
         let bounding_rect = sign.bounding_rect().clone();
 
-        use std::time::Instant;
-        let now = Instant::now();
         let mut sign_clone = sign.clone();
-        unsafe {
-            clone_time += now.elapsed();
-        }
 
         for x in float_loop(
             bounding_rect.min_x(),
@@ -945,13 +920,25 @@ impl <T: std::io::Write> GCodeCreator<T> {
             for y in
                 sign.get_y_values(x)
                     .iter()
+                    .chain(
+                        if let Some(ys) = fill_rect.get_ys(x) {
+                            ys.clone()
+                        } else {
+                            vec![]
+                        }.iter()
+                    )
+                    .chain(
+                        if let Some(bigger_sign) = &mut bigger_sign {
+                            bigger_sign.get_y_values(x)
+                        } else {
+                            vec![]
+                        }.iter()
+                    )
                     .map(|y| vec![*y, *y-0.1 * increment, *y+0.1 * increment])
                     .flatten()
                     .collect::<Vec<f64>>()
             {
                 if let Some(bigger_sign) = &mut bigger_sign {
-
-                    let now = Instant::now();
                     self.cut_broad_smart_path2(
                         do_cut_on_odd, &mut sign_clone, &tool,
                         &mut fill_rect, x, y, increment,
@@ -1006,20 +993,14 @@ impl <T: std::io::Write> GCodeCreator<T> {
                             }
                         }),
                     );
-                    unsafe {
-                        cut_broad_path_time += now.elapsed();
-                    }
                 } else {
-
-                    use std::time::Instant;
-                    let now = Instant::now();
                     self.cut_broad_smart_path2(
                         do_cut_on_odd, &mut sign_clone, &tool,
                         &mut fill_rect, x, y, increment,
                         only_cleanup,
                         Box::from(|args| {
                             match args {
-                                CutBroadSmartPathMethodArguments::CanCut(x, y) => {
+                                CutBroadSmartPathMethodArguments::CanCut(_, _) => {
                                     CutBroadSmartPathMethodReturn::CanCut(true)
                                 },
                                 CutBroadSmartPathMethodArguments::MaxY(x, y) => {
@@ -1039,16 +1020,12 @@ impl <T: std::io::Write> GCodeCreator<T> {
                             }
                         }),
                     );
-                    unsafe {
-                        cut_broad_path_time += now.elapsed();
-                    }
                 }
             }
         }
-
     }
 
-    pub fn cut_text<
+    fn cut_text<
         J : lines_and_curves::Intersection +
         std::fmt::Debug + Clone + cnc_router::CNCPath
     > (
@@ -1057,7 +1034,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
         signs : &Vec<sign::Sign<J> >,
         add_padding_to: &Vec<(cnc_router::ToolType, f64)>,
         tool: &cnc_router::Tool,
-        tool_index: usize,
     ) {
         for sign in signs {
 
@@ -1081,7 +1057,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                     &tool.tool_type(),
                     tool.radius,
                     cut_inside,
-                    Box::from(|x, y| true),
+                    Box::from(|_, _| true),
                 );
 
                 self.cnc_router.move_to_optional_coordinate(

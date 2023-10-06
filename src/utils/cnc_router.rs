@@ -587,7 +587,12 @@ impl <T: std::io::Write> CNCRouter<T> {
         );
         self.touch_off_tool(suggested_length);
         self.write_gcode_str(pre_cut_gcode);
+        self.write_gcode_string(
+            format!("T{} M6{}", self.tools[tool_index].index_in_machine,
+                self.verbose_string(String::from(" (Tool change.)")))
+        );
         self.write_gcode_command("G54", self.verbose_str(" (Change 0 coordinate)"));
+        self.go_home();
     }
 
     pub fn get_tools(&self) -> &Vec<Tool> {
