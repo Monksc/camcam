@@ -44,6 +44,7 @@ pub enum ToolType {
     DontAddCutBroad,
     FullCutText,
     PartialCutText(f64, f64), // angle, max length of cut
+    PartialCutTextRadius(f64),
     Braille,
 }
 
@@ -72,6 +73,7 @@ impl ToolType {
             ToolType::DontAddCutBroad => String::from("Don't Add Cut Broad"),
             ToolType::FullCutText => String::from("Full Cut Text"),
             ToolType::PartialCutText(_, _) => String::from("Partial Cut Text"),
+            ToolType::PartialCutTextRadius(_) => String::from("Partial Cut Text Radius"),
             ToolType::Braille => String::from("Braille"),
         }
     }
@@ -83,7 +85,8 @@ impl ToolType {
             ToolType::DontAddCutBroad => 3,
             ToolType::FullCutText => 4,
             ToolType::PartialCutText(_, _) => 5,
-            ToolType::Braille => 6,
+            ToolType::PartialCutTextRadius(_) => 6,
+            ToolType::Braille => 7,
         }
     }
     pub fn full_cut(self) -> bool {
@@ -100,11 +103,20 @@ impl ToolType {
         ToolType::FullCutText == self ||
         if let ToolType::PartialCutText(_, _) = self {
             true
-        } else { false }
+        } else if let ToolType::PartialCutTextRadius(_) = self {
+            true
+        } else {
+            false
+        }
     }
 
     pub fn is_braille(self) -> bool {
-        ToolType::Braille == self
+        ToolType::Braille == self ||
+        if let ToolType::PartialCutTextRadius(_) = self {
+            true
+        } else {
+            false
+        }
     }
 
     pub fn is_broad(self) -> bool {
@@ -134,6 +146,7 @@ pub enum Smoothness {
     Rough,
     Medium,
     Finish,
+    NoChange,
 }
 impl Smoothness {
     pub fn raw_value(&self) -> usize {
@@ -141,6 +154,7 @@ impl Smoothness {
             Smoothness::Rough => 0,
             Smoothness::Medium => 1,
             Smoothness::Finish => 2,
+            Smoothness::NoChange => 3,
         }
     }
     pub fn description(&self) -> String {
@@ -148,12 +162,17 @@ impl Smoothness {
             Smoothness::Rough => String::from("Rough"),
             Smoothness::Medium => String::from("Medium"),
             Smoothness::Finish => String::from("Finish"),
+            Smoothness::NoChange => String::from("No Change"),
         }
     }
 }
 impl std::fmt::Display for Smoothness {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "P{}", self.raw_value()+1)
+        if let Smoothness::NoChange = self {
+            Ok(())
+        } else {
+            write!(f, "P{}", self.raw_value()+1)
+        }
     }
 }
 
@@ -236,7 +255,8 @@ impl <T: std::io::Write> CNCRouter<T> {
     }
 
     fn format_command(&mut self, new_command: String) -> String {
-        if self.last_command == new_command {
+        if self.last_command == new_command &&
+            (new_command == "G00" || new_command == "G01") {
             return String::new();
         }
         self.last_command = new_command;
@@ -367,6 +387,12 @@ impl <T: std::io::Write> CNCRouter<T> {
         self.write_gcode_string(
             format!("{}{}", c, line)
         )
+    }
+
+    // Used if settings become unknown
+    // Like call a sub program
+    pub fn reset_settings(&mut self) {
+        self.last_command = String::new();
     }
 
     pub fn force_flush_gcode(&mut self) {
@@ -566,6 +592,7 @@ impl <T: std::io::Write> CNCRouter<T> {
         should_touch_off_tool: bool,
         suggested_length: f64,
     ) {
+        self.reset_settings();
         self.current_tool_index = tool_index;
         self.go_home();
         self.write_gcode_str("");
@@ -585,11 +612,18 @@ impl <T: std::io::Write> CNCRouter<T> {
             self.tools[tool_index].offset_length,
             feed_rate
         );
-        self.touch_off_tool(suggested_length);
+        if should_touch_off_tool {
+            self.touch_off_tool(suggested_length);
+        }
         self.write_gcode_str(pre_cut_gcode);
         self.write_gcode_string(
             format!("T{} M6{}", self.tools[tool_index].index_in_machine,
                 self.verbose_string(String::from(" (Tool change.)")))
+        );
+        self.set_tool_offset_positive(
+            self.tools[tool_index].index_in_machine,
+            self.tools[tool_index].offset_length,
+            feed_rate
         );
         self.write_gcode_command("G54", self.verbose_str(" (Change 0 coordinate)"));
         self.go_home();
@@ -725,6 +759,7 @@ impl <T: std::io::Write> CNCRouter<T> {
     pub fn go_home(&mut self) {
         // self.referance_pos = self.pos;
         // self.referance_pos.z = self.home_pos.z;
+        self.reset_settings();
         self.write_gcode_command(
             "G00",
             format!("X{} Y{} Z{}{}",
@@ -1979,6 +2014,64 @@ pub trait CNCPath {
                         None,
                     ),
                     feed_rate, false,
+                );
+            }
+        } else if let ToolType::PartialCutTextRadius(previous_radius) = tool_type {
+            let mut is_up = true;
+            for i in 0..new_points.len() {
+                let j = (i+1) % new_points.len();
+                let m = (i+new_points.len()-1) % new_points.len();
+
+                if  !can_cut(new_points[i].x, new_points[i].y) &&
+                    !can_cut(new_points[j].x, new_points[j].y) &&
+                    !can_cut(
+                        (new_points[i].x + new_points[j].x) / 2.0,
+                        (new_points[i].y + new_points[j].y) / 2.0,
+                    ) &&
+                    !can_cut(new_points[m].x, new_points[m].y)
+                {
+                    if !is_up {
+                        cnc_router.move_to_optional_coordinate(
+                            &cnc_router::OptionalCoordinate::from_z(
+                                Some(z_axis_of_cut)
+                            ),
+                            Some(feed_rate_of_drill), false,
+                        );
+                        is_up = true;
+                    }
+                    continue
+                }
+
+                if is_up {
+                    cnc_router.move_to_coordinate_rapid(
+                        &cnc_router::Coordinate::from(
+                            new_points[i].x, new_points[i].y, z_axis_of_cut
+                        )
+                    );
+                    cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(z_axis_of_cut + depth_of_cut)
+                        ),
+                        Some(feed_rate_of_drill), false,
+                    );
+                    is_up = false;
+                }
+
+                cnc_router.move_to_optional_coordinate(
+                    &OptionalCoordinate::from(
+                        Some(new_points[j].x),
+                        Some(new_points[j].y),
+                        None,
+                    ),
+                    feed_rate, false,
+                );
+            }
+            if !is_up {
+                cnc_router.move_to_optional_coordinate(
+                    &cnc_router::OptionalCoordinate::from_z(
+                        Some(z_axis_of_cut)
+                    ),
+                    Some(feed_rate_of_drill), false,
                 );
             }
         } else {

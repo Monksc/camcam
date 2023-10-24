@@ -527,6 +527,7 @@ fn main() {
     // ];
 
 
+    /*
     let shapes = &mut vec![
         sign::Sign::from(
                 lines_and_curves::Rectangle::from(
@@ -573,7 +574,78 @@ fn main() {
             ],
         )
     ];
+    */
 
+    let shapes = &mut vec![
+        sign::Sign::from(
+                lines_and_curves::Rectangle::from(
+                        lines_and_curves::Point::from(0.0, 0.0),
+                        lines_and_curves::Point::from(7.0, 7.0)
+                ),
+                vec![
+                sign::Shape::from(
+                        cnc_router::ToolType::FullCutText,
+                        lines_and_curves::LineSegment::create_path(&vec![
+                                lines_and_curves::Point::from(1.4663150672912597, 1.6638663177490234),
+                                lines_and_curves::Point::from(1.3664961223602294, 1.250413215637207),
+                                lines_and_curves::Point::from(2.1344960098266603, 1.250413215637207),
+                                lines_and_curves::Point::from(2.1344960098266603, 1.6638663177490234),
+                                lines_and_curves::Point::from(1.764216697692871, 1.6638663177490234),
+                                lines_and_curves::Point::from(1.6633503799438476, 1.6638663177490234),
+                                lines_and_curves::Point::from(1.6633503799438476, 1.357574737548828),
+                                lines_and_curves::Point::from(1.4663150672912597, 1.357574737548828),
+                ], true)
+                        .iter()
+                        .map(|x| lines_and_curves::AllIntersections::LineSegment(x.clone()))
+                        .collect(),
+                ),
+                sign::Shape::from(
+                        cnc_router::ToolType::FullCutText,
+                        lines_and_curves::LineSegment::create_path(&vec![
+                                lines_and_curves::Point::from(1.4743898277282714, 2.1976182823181154),
+                                lines_and_curves::Point::from(1.3480685119628906, 2.006657398223877),
+                                lines_and_curves::Point::from(1.3486428623199462, 1.9701102142333984),
+                                lines_and_curves::Point::from(1.5155365829467773, 1.7731578712463378),
+                                lines_and_curves::Point::from(1.5421064262390136, 1.7717440490722656),
+                                lines_and_curves::Point::from(1.5751755599975585, 1.7736919288635253),
+                                lines_and_curves::Point::from(1.6068766479492187, 1.7808483009338378),
+                                lines_and_curves::Point::from(1.6370141868591308, 1.7930119400024414),
+                                lines_and_curves::Point::from(1.6653111343383789, 1.8102362518310546),
+                                lines_and_curves::Point::from(1.748633659362793, 1.9252832298278808),
+                                lines_and_curves::Point::from(2.0662167434692384, 1.7923415069580078),
+                                lines_and_curves::Point::from(1.7868545417785644, 2.196622169494629),
+                                lines_and_curves::Point::from(1.7595503692626953, 2.1726134185791017),
+                ], true)
+                        .iter()
+                        .map(|x| lines_and_curves::AllIntersections::LineSegment(x.clone()))
+                        .collect(),
+                ),
+                sign::Shape::from(
+                        cnc_router::ToolType::FullCutText,
+                        lines_and_curves::LineSegment::create_path(&vec![
+                                lines_and_curves::Point::from(1.3654301528930664, 2.4385269050598146),
+                                lines_and_curves::Point::from(1.5155365829467773, 2.3124964599609377),
+                                lines_and_curves::Point::from(2.0361073379516603, 2.311342514038086),
+                ], true)
+                        .iter()
+                        .map(|x| lines_and_curves::AllIntersections::LineSegment(x.clone()))
+                        .collect(),
+                ),
+                sign::Shape::from(
+                        cnc_router::ToolType::FullCutText,
+                        lines_and_curves::LineSegment::create_path(&vec![
+                                lines_and_curves::Point::from(0.188, 0.188), // Softy
+                                lines_and_curves::Point::from(3.063, 0.188), // Softy
+                                lines_and_curves::Point::from(3.063, 3.813), // Softy
+                                lines_and_curves::Point::from(0.188, 3.813), // Softy
+                ], true)
+                        .iter()
+                        .map(|x| lines_and_curves::AllIntersections::LineSegment(x.clone()))
+                        .collect(),
+                ),
+            ],
+        )
+    ];
 
     gc.build_gcode_smart_path(
         true,

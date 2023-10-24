@@ -90,7 +90,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
         }
 
         gc.cnc_router.generate_header(use_inches, &name);
-        gc.cnc_router.run_subprogram("800");
 
         return gc;
     }
@@ -547,17 +546,20 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 if let cnc_router::ToolType::SpaceBetweenCutBroad(override_thinest_radius)
                     = tool.tool_type() {
 
+                    // let increment = 2.0 * tool.radius * tool.offset;
                     let bigger_radius = if override_thinest_radius == 0.0 {
                         thinnest_radius_seen
                     } else {
                         override_thinest_radius
-                    };
+                    }; // + 8.0 * increment;
 
                     thick_sign = thick_sign.expand_lines(
-                        bigger_radius, do_cut_on_odd, &add_padding_to,
+                        bigger_radius + tool.radius * tool.offset, do_cut_on_odd, &add_padding_to,
                     );
                     thick_sign = thick_sign.expand_lines(
-                        tool.radius - bigger_radius, do_cut_on_odd, &Vec::new(),
+                        tool.radius - bigger_radius - 1.1 * tool.radius * tool.offset,
+                        do_cut_on_odd,
+                        &Vec::new(),
                     );
                 }
 
@@ -601,7 +603,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
             tool.radius,
             tool_time.elapsed(),
         );
-
     }
 
     pub fn build_gcode_smart_path<J : lines_and_curves::Intersection +
@@ -668,7 +669,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
             }
         }
 
-        self.cnc_router.reset_program_and_end();
+        // self.cnc_router.reset_program_and_end();
     }
 
 
@@ -732,7 +733,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
             let prev_x = x;
             let prev_y = y;
             let mut found_new_value = false;
-            for i in 0..7 {
+            for i in 0..5 {
                 if i == prev_i_move && i == 2 { continue; }
                 if i >= 2 && !moved { continue }
                 if i == 2 {
@@ -918,6 +919,12 @@ impl <T: std::io::Write> GCodeCreator<T> {
             },
         ) {
             for y in
+                // float_loop(
+                //     bounding_rect.min_y(),
+                //     bounding_rect.max_y(),
+                //     increment,
+                //     Vec::new()
+                // )
                 sign.get_y_values(x)
                     .iter()
                     .chain(
@@ -934,8 +941,9 @@ impl <T: std::io::Write> GCodeCreator<T> {
                             vec![]
                         }.iter()
                     )
-                    .map(|y| vec![*y, *y-0.1 * increment, *y+0.1 * increment])
-                    .flatten()
+                    // .map(|y| vec![*y, *y-0.1 * increment, *y+0.1 * increment])
+                    .map(|y| *y)
+                    // .flatten()
                     .collect::<Vec<f64>>()
             {
                 if let Some(bigger_sign) = &mut bigger_sign {
@@ -957,6 +965,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                                     {
                                         return CutBroadSmartPathMethodReturn::CanCut(false);
                                     }
+
                                     let value =
                                         sign.sees_even_odd_lines_before(
                                             x, y, do_cut_on_odd, true,
@@ -1035,30 +1044,67 @@ impl <T: std::io::Write> GCodeCreator<T> {
         add_padding_to: &Vec<(cnc_router::ToolType, f64)>,
         tool: &cnc_router::Tool,
     ) {
-        for sign in signs {
+        for original_sign in signs {
 
-            let mut sign = sign.expand_lines(tool.radius, do_cut_on_odd, add_padding_to);
+            let mut sign = original_sign.expand_lines(tool.radius, do_cut_on_odd, add_padding_to);
             let shapes = sign.shapes_cut_inside(do_cut_on_odd);
             for (shape, cut_inside) in shapes {
                 if !shape.tool_type().is_same_type(&tool.tool_type()) {
                     continue;
                 }
 
-                cnc_router::CNCPath::cut_till::<T>(
-                    shape.lines(),
-                    None,
-                    None,
-                    &mut self.cnc_router,
-                    Some(tool.feed_rate_of_cut),
-                    true,
-                    tool.feed_rate_of_drill,
-                    self.z_axis_off_cut+tool.length,
-                    self.depth_of_cut+tool.length,
-                    &tool.tool_type(),
-                    tool.radius,
-                    cut_inside,
-                    Box::from(|_, _| true),
-                );
+                if let cnc_router::ToolType::PartialCutTextRadius(
+                    bigger_radius
+                ) = tool.tool_type() {
+                    let mut bigger_sign =
+                        original_sign
+                        .expand_lines(
+                            bigger_radius, do_cut_on_odd, add_padding_to
+                        )
+                        .expand_lines(
+                            tool.radius - bigger_radius - 0.5 * tool.radius * tool.offset,
+                            do_cut_on_odd,
+                            &Vec::new(),
+                        );
+                    cnc_router::CNCPath::cut_till::<T>(
+                        shape.lines(),
+                        None,
+                        None,
+                        &mut self.cnc_router,
+                        Some(tool.feed_rate_of_cut),
+                        true,
+                        tool.feed_rate_of_drill,
+                        self.z_axis_off_cut+tool.length,
+                        self.depth_of_cut+tool.length,
+                        &tool.tool_type(),
+                        tool.radius,
+                        cut_inside,
+                        Box::from(|x: f64, y: f64| {
+                            sign.sees_even_odd_lines_before(
+                                x, y, do_cut_on_odd, true,
+                            ) &&
+                            bigger_sign.sees_even_odd_lines_before(
+                                x, y, !do_cut_on_odd, false,
+                            )
+                        }),
+                    );
+                } else {
+                    cnc_router::CNCPath::cut_till::<T>(
+                        shape.lines(),
+                        None,
+                        None,
+                        &mut self.cnc_router,
+                        Some(tool.feed_rate_of_cut),
+                        true,
+                        tool.feed_rate_of_drill,
+                        self.z_axis_off_cut+tool.length,
+                        self.depth_of_cut+tool.length,
+                        &tool.tool_type(),
+                        tool.radius,
+                        cut_inside,
+                        Box::from(|_, _| true)
+                    );
+                };
 
                 self.cnc_router.move_to_optional_coordinate(
                     &cnc_router::OptionalCoordinate::from_z(
