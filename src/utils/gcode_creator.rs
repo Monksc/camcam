@@ -543,7 +543,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 );
 
                 let mut thick_sign = sign.clone();
-                if let cnc_router::ToolType::SpaceBetweenCutBroad(override_thinest_radius)
+                if let cnc_router::ToolType::SpaceBetweenCutBroad(override_thinest_radius, shrink_by_radius)
                     = tool.tool_type() {
 
                     // let increment = 2.0 * tool.radius * tool.offset;
@@ -554,11 +554,13 @@ impl <T: std::io::Write> GCodeCreator<T> {
                     }; // + 8.0 * increment;
 
                     thick_sign = thick_sign.expand_lines(
-                        bigger_radius + tool.radius * tool.offset, do_cut_on_odd, &add_padding_to,
+                        bigger_radius, do_cut_on_odd, &add_padding_to,
                     );
                     thick_sign = thick_sign.expand_lines(
-                        tool.radius - bigger_radius - 1.1 * tool.radius * tool.offset,
-                        do_cut_on_odd,
+                        // tool.radius - bigger_radius - 1.1 * tool.radius * tool.offset,
+                        // do_cut_on_odd,
+                        bigger_radius - tool.radius + shrink_by_radius,
+                        !do_cut_on_odd,
                         &Vec::new(),
                     );
                 }
@@ -571,13 +573,13 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 self.broad_smart_path2(
                     do_cut_on_odd,
                     &mut sign.expand_lines(tool.radius, do_cut_on_odd, &add_padding_to),
-                    if let cnc_router::ToolType::SpaceBetweenCutBroad(_) = tool.tool_type() {
+                    if let cnc_router::ToolType::SpaceBetweenCutBroad(_, _) = tool.tool_type() {
                         Some(&mut thick_sign)
                     } else {
                         None
                     },
                     &tool,
-                    if let cnc_router::ToolType::SpaceBetweenCutBroad(_) = tool.tool_type() {
+                    if let cnc_router::ToolType::SpaceBetweenCutBroad(_, _) = tool.tool_type() {
                         &mut zero_range
                     } else {
                         &mut fill_rect
@@ -680,7 +682,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
         std::fmt::Debug + Clone + cnc_router::CNCPath
     > (
         &mut self,
-        do_cut_on_odd: bool,
+        // do_cut_on_odd: bool,
         sign : &mut sign::Sign<J>,
         tool: &cnc_router::Tool,
         fill_rect: &mut range_map::FillRect,
@@ -688,7 +690,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
         y: f64,
         increment: f64,
         only_cleanup: bool,
-        mut methods: Box::<
+        methods: &mut Box::<
             impl FnMut(CutBroadSmartPathMethodArguments) ->
                 CutBroadSmartPathMethodReturn
         >
@@ -696,8 +698,8 @@ impl <T: std::io::Write> GCodeCreator<T> {
         let mut x = x;
         let mut y = y;
 
-        let y_before = sign.y_values_before(x, y);
-        if ((y_before % 2 == 1) != do_cut_on_odd) ||
+        // let y_before = sign.y_values_before(x, y);
+        if // ((y_before % 2 == 1) != do_cut_on_odd) ||
             !methods(CutBroadSmartPathMethodArguments::CanCut(x, y)).can_cut()
             // (only_cleanup && sign.y_values_before(x, y) <= 1)
             // (only_cleanup &&
@@ -733,7 +735,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
             let prev_x = x;
             let prev_y = y;
             let mut found_new_value = false;
-            for i in 0..5 {
+            for i in 0..3 {
                 if i == prev_i_move && i == 2 { continue; }
                 if i >= 2 && !moved { continue }
                 if i == 2 {
@@ -798,8 +800,8 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         // ((x - new_x).abs() + (y - new_y).abs() + 0.0001) >= increment
                         ((x - new_x).abs() + (y - new_y).abs()) >= increment / 2.0
                     ) &&
-                    sign.sees_even_odd_lines_before(new_x, new_y, do_cut_on_odd, true) &&
-                    sign.sees_even_odd_lines_before((new_x+x)/2.0, (new_y+y)/2.0, do_cut_on_odd, true) &&
+                    // sign.sees_even_odd_lines_before(new_x, new_y, do_cut_on_odd, true) &&
+                    // sign.sees_even_odd_lines_before((new_x+x)/2.0, (new_y+y)/2.0, do_cut_on_odd, true) &&
                     // (
                     //     (sign.y_values_before(new_x, new_y) % 2 == 1)
                     //     == do_cut_on_odd
@@ -890,7 +892,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
         }
     }
 
-    pub fn broad_smart_path2<
+    fn find_pockets<
         J : lines_and_curves::Intersection +
         std::fmt::Debug + Clone + cnc_router::CNCPath
     > (
@@ -901,12 +903,148 @@ impl <T: std::io::Write> GCodeCreator<T> {
         tool: &cnc_router::Tool,
         mut fill_rect : &mut range_map::FillRect,
         only_cleanup: bool,
-    ) {
+    ) -> Vec<lines_and_curves::Point> {
+        let mut pockets = Vec::new();
 
+        return pockets;
+    }
+
+
+    pub fn broad_smart_path2<
+        J : lines_and_curves::Intersection +
+        std::fmt::Debug + Clone + cnc_router::CNCPath
+    > (
+        &mut self,
+        do_cut_on_odd: bool,
+        mut sign : &mut sign::Sign<J>,
+        mut bigger_sign : Option<&mut sign::Sign<J>>,
+        tool: &cnc_router::Tool,
+        mut fill_rect : &mut range_map::FillRect,
+        only_cleanup: bool,
+    ) {
         let increment = 2.0 * tool.radius * tool.offset;
         let bounding_rect = sign.bounding_rect().clone();
 
         let mut sign_clone = sign.clone();
+
+        if let Some(bigger_sign) = &mut bigger_sign {
+            self.broad_smart_path2_helper(
+                do_cut_on_odd,
+                &mut sign_clone,
+                Some(&mut bigger_sign.clone()),
+                &tool,
+                &mut fill_rect,
+                only_cleanup,
+                Box::from(|args| {
+                    match args {
+                        CutBroadSmartPathMethodArguments::CanCut(x, y) => {
+                            if x <= sign.bounding_rect().min_x() +
+                                    2.0 * tool.radius + 0.01 ||
+                                x >= sign.bounding_rect().max_x() -
+                                    2.0 * tool.radius - 0.01 ||
+                                y <= sign.bounding_rect().min_y() +
+                                    2.0 * tool.radius + 0.01 ||
+                                y >= sign.bounding_rect().max_y() -
+                                    2.0 * tool.radius - 0.01
+                            {
+                                return CutBroadSmartPathMethodReturn::CanCut(false);
+                            }
+
+                            let value =
+                                sign.sees_even_odd_lines_before(
+                                    x, y, do_cut_on_odd, true,
+                                ) &&
+                                bigger_sign.sees_even_odd_lines_before(
+                                    x, y, !do_cut_on_odd, false,
+                                );
+                            CutBroadSmartPathMethodReturn::CanCut(value)
+                        },
+                        CutBroadSmartPathMethodArguments::MaxY(x, y) => {
+                            let next_bigger = bigger_sign.get_next_y_value_bounds(
+                                x, y
+                            ) - increment / 2.0;
+                            let next_sign = sign.get_next_y_value_bounds(
+                                x, y
+                            ) - increment / 2.0;
+                            CutBroadSmartPathMethodReturn::MaxY(
+                                next_bigger.min(next_sign)
+                                    .max(y)
+                            )
+                        },
+                        CutBroadSmartPathMethodArguments::MinY(x, y) => {
+                            let next_bigger = bigger_sign.get_prev_y_value_bounds(
+                                x, y
+                            ) + increment / 2.0;
+                            let next_sign = sign.get_prev_y_value_bounds(
+                                x, y
+                            ) + increment / 2.0;
+                            CutBroadSmartPathMethodReturn::MinY(
+                                next_bigger.max(next_sign)
+                                    .min(y)
+                            )
+                        },
+                    }
+                })
+            );
+        } else {
+            self.broad_smart_path2_helper(
+                do_cut_on_odd,
+                &mut sign_clone,
+                bigger_sign,
+                &tool,
+                &mut fill_rect,
+                only_cleanup,
+                Box::from(|args| {
+                    match args {
+                        CutBroadSmartPathMethodArguments::CanCut(x, y) => {
+                            CutBroadSmartPathMethodReturn::CanCut(
+                                sign.sees_even_odd_lines_before(
+                                    x, y, do_cut_on_odd, true,
+                                )
+                            )
+                        },
+                        CutBroadSmartPathMethodArguments::MaxY(x, y) => {
+                            CutBroadSmartPathMethodReturn::MaxY(
+                                sign.get_next_y_value_bounds(
+                                    x, y
+                                )
+                            )
+                        },
+                        CutBroadSmartPathMethodArguments::MinY(x, y) => {
+                            CutBroadSmartPathMethodReturn::MinY(
+                                sign.get_prev_y_value_bounds(
+                                    x, y
+                                )
+                            )
+                        },
+                    }
+                })
+            );
+        };
+
+    }
+
+    fn broad_smart_path2_helper<
+        J : lines_and_curves::Intersection +
+        std::fmt::Debug + Clone + cnc_router::CNCPath
+    > (
+        &mut self,
+        do_cut_on_odd: bool,
+        sign : &mut sign::Sign<J>,
+        mut bigger_sign : Option<&mut sign::Sign<J>>,
+        tool: &cnc_router::Tool,
+        mut fill_rect : &mut range_map::FillRect,
+        only_cleanup: bool,
+        mut methods: Box::<
+            impl FnMut(CutBroadSmartPathMethodArguments) ->
+                CutBroadSmartPathMethodReturn
+        >
+    ) {
+        let mut sign_clone = sign.clone();
+        let increment = 2.0 * tool.radius * tool.offset;
+        let bounding_rect = sign.bounding_rect().clone();
+
+        let mut pockets = Vec::new();
 
         for x in float_loop(
             bounding_rect.min_x(),
@@ -946,90 +1084,47 @@ impl <T: std::io::Write> GCodeCreator<T> {
                     // .flatten()
                     .collect::<Vec<f64>>()
             {
-                if let Some(bigger_sign) = &mut bigger_sign {
-                    self.cut_broad_smart_path2(
-                        do_cut_on_odd, &mut sign_clone, &tool,
-                        &mut fill_rect, x, y, increment,
-                        only_cleanup,
-                        Box::from(|args| {
-                            match args {
-                                CutBroadSmartPathMethodArguments::CanCut(x, y) => {
-                                    if x <= sign.bounding_rect().min_x() +
-                                            2.0 * tool.radius + 0.01 ||
-                                        x >= sign.bounding_rect().max_x() -
-                                            2.0 * tool.radius - 0.01 ||
-                                        y <= sign.bounding_rect().min_y() +
-                                            2.0 * tool.radius + 0.01 ||
-                                        y >= sign.bounding_rect().max_y() -
-                                            2.0 * tool.radius - 0.01
-                                    {
-                                        return CutBroadSmartPathMethodReturn::CanCut(false);
-                                    }
-
-                                    let value =
-                                        sign.sees_even_odd_lines_before(
-                                            x, y, do_cut_on_odd, true,
-                                        ) &&
-                                        bigger_sign.sees_even_odd_lines_before(
-                                            x, y, !do_cut_on_odd, false,
-                                        );
-                                    CutBroadSmartPathMethodReturn::CanCut(value)
-                                },
-                                CutBroadSmartPathMethodArguments::MaxY(x, y) => {
-                                    let next_bigger = bigger_sign.get_next_y_value_bounds(
-                                        x, y
-                                    ) - increment / 2.0;
-                                    let next_sign = sign.get_next_y_value_bounds(
-                                        x, y
-                                    ) - increment / 2.0;
-                                    CutBroadSmartPathMethodReturn::MaxY(
-                                        next_bigger.min(next_sign)
-                                            .max(y)
-                                    )
-                                },
-                                CutBroadSmartPathMethodArguments::MinY(x, y) => {
-                                    let next_bigger = bigger_sign.get_prev_y_value_bounds(
-                                        x, y
-                                    ) + increment / 2.0;
-                                    let next_sign = sign.get_prev_y_value_bounds(
-                                        x, y
-                                    ) + increment / 2.0;
-                                    CutBroadSmartPathMethodReturn::MinY(
-                                        next_bigger.max(next_sign)
-                                            .min(y)
-                                    )
-                                },
-                            }
-                        }),
-                    );
-                } else {
-                    self.cut_broad_smart_path2(
-                        do_cut_on_odd, &mut sign_clone, &tool,
-                        &mut fill_rect, x, y, increment,
-                        only_cleanup,
-                        Box::from(|args| {
-                            match args {
-                                CutBroadSmartPathMethodArguments::CanCut(_, _) => {
-                                    CutBroadSmartPathMethodReturn::CanCut(true)
-                                },
-                                CutBroadSmartPathMethodArguments::MaxY(x, y) => {
-                                    CutBroadSmartPathMethodReturn::MaxY(
-                                        sign.get_next_y_value_bounds(
-                                            x, y
-                                        )
-                                    )
-                                },
-                                CutBroadSmartPathMethodArguments::MinY(x, y) => {
-                                    CutBroadSmartPathMethodReturn::MinY(
-                                        sign.get_prev_y_value_bounds(
-                                            x, y
-                                        )
-                                    )
-                                },
-                            }
-                        }),
-                    );
+                if methods(CutBroadSmartPathMethodArguments::CanCut(x, y)).can_cut() {
+                    pockets.push(lines_and_curves::Point::from(x, y));
                 }
+            }
+        }
+
+        if only_cleanup {
+            while !pockets.is_empty() {
+                let mut index = 0;
+                let current_point = self.cnc_router.get_point();
+                let mut best_distance = current_point.distance_to(&pockets[0]);
+                for i in 1..pockets.len() {
+                    let distance = current_point.distance_to(&pockets[i]);
+                    if distance < best_distance {
+                        best_distance = distance;
+                        index = i;
+                    }
+                }
+
+                let x = pockets[index].x;
+                let y = pockets[index].y;
+                self.cut_broad_smart_path2(
+                    // do_cut_on_odd,
+                    &mut sign_clone, &tool,
+                    &mut fill_rect, x, y, increment,
+                    only_cleanup,
+                    &mut methods,
+                );
+                pockets.swap_remove(index);
+            }
+        } else {
+            for point in &pockets {
+                let x = point.x;
+                let y = point.y;
+                self.cut_broad_smart_path2(
+                    // do_cut_on_odd,
+                    &mut sign_clone, &tool,
+                    &mut fill_rect, x, y, increment,
+                    only_cleanup,
+                    &mut methods,
+                );
             }
         }
     }
@@ -1054,16 +1149,21 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 }
 
                 if let cnc_router::ToolType::PartialCutTextRadius(
-                    bigger_radius
+                    bigger_radius,
+                    shrink_by_radius,
                 ) = tool.tool_type() {
                     let mut bigger_sign =
                         original_sign
                         .expand_lines(
+                            // bigger_radius + 0.2 * tool.radius * tool.offset, do_cut_on_odd, add_padding_to
                             bigger_radius, do_cut_on_odd, add_padding_to
                         )
                         .expand_lines(
-                            tool.radius - bigger_radius - 0.5 * tool.radius * tool.offset,
-                            do_cut_on_odd,
+                            // tool.radius - bigger_radius - 0.5 * tool.radius * tool.offset,
+                            // do_cut_on_odd,
+                            // bigger_radius - tool.radius + 0.1 * tool.radius * tool.offset,
+                            bigger_radius - tool.radius + shrink_by_radius,
+                            !do_cut_on_odd,
                             &Vec::new(),
                         );
                     cnc_router::CNCPath::cut_till::<T>(

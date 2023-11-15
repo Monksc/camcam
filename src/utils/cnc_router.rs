@@ -40,11 +40,11 @@ pub struct CNCRouter<T: std::io::Write> {
 pub enum ToolType {
     FullCutBroad,
     PartialCutBroad,
-    SpaceBetweenCutBroad(f64),
+    SpaceBetweenCutBroad(f64, f64), // bigger radius, extra shrink by
     DontAddCutBroad,
     FullCutText,
     PartialCutText(f64, f64), // angle, max length of cut
-    PartialCutTextRadius(f64),
+    PartialCutTextRadius(f64, f64),  // bigger radius, extra shrink by
     Braille,
 }
 
@@ -69,11 +69,11 @@ impl ToolType {
         match self {
             ToolType::FullCutBroad => String::from("Full Cut Broad"),
             ToolType::PartialCutBroad => String::from("Partial Cut Broad"),
-            ToolType::SpaceBetweenCutBroad(_) => String::from("Space Between Cut Broad"),
+            ToolType::SpaceBetweenCutBroad(_, _) => String::from("Space Between Cut Broad"),
             ToolType::DontAddCutBroad => String::from("Don't Add Cut Broad"),
             ToolType::FullCutText => String::from("Full Cut Text"),
             ToolType::PartialCutText(_, _) => String::from("Partial Cut Text"),
-            ToolType::PartialCutTextRadius(_) => String::from("Partial Cut Text Radius"),
+            ToolType::PartialCutTextRadius(_, _) => String::from("Partial Cut Text Radius"),
             ToolType::Braille => String::from("Braille"),
         }
     }
@@ -81,11 +81,11 @@ impl ToolType {
         match self {
             ToolType::FullCutBroad => 0,
             ToolType::PartialCutBroad => 1,
-            ToolType::SpaceBetweenCutBroad(_) => 2,
+            ToolType::SpaceBetweenCutBroad(_, _) => 2,
             ToolType::DontAddCutBroad => 3,
             ToolType::FullCutText => 4,
             ToolType::PartialCutText(_, _) => 5,
-            ToolType::PartialCutTextRadius(_) => 6,
+            ToolType::PartialCutTextRadius(_, _) => 6,
             ToolType::Braille => 7,
         }
     }
@@ -103,7 +103,7 @@ impl ToolType {
         ToolType::FullCutText == self ||
         if let ToolType::PartialCutText(_, _) = self {
             true
-        } else if let ToolType::PartialCutTextRadius(_) = self {
+        } else if let ToolType::PartialCutTextRadius(_, _) = self {
             true
         } else {
             false
@@ -112,7 +112,7 @@ impl ToolType {
 
     pub fn is_braille(self) -> bool {
         ToolType::Braille == self ||
-        if let ToolType::PartialCutTextRadius(_) = self {
+        if let ToolType::PartialCutTextRadius(_, _) = self {
             true
         } else {
             false
@@ -122,7 +122,7 @@ impl ToolType {
     pub fn is_broad(self) -> bool {
         ToolType::FullCutBroad == self ||
         ToolType::PartialCutBroad == self ||
-        if let ToolType::SpaceBetweenCutBroad(_) = self {
+        if let ToolType::SpaceBetweenCutBroad(_, _) = self {
             true
         } else {
             false
@@ -2016,7 +2016,7 @@ pub trait CNCPath {
                     feed_rate, false,
                 );
             }
-        } else if let ToolType::PartialCutTextRadius(previous_radius) = tool_type {
+        } else if let ToolType::PartialCutTextRadius(_, _) = tool_type {
             let mut is_up = true;
             for i in 0..new_points.len() {
                 let j = (i+1) % new_points.len();
