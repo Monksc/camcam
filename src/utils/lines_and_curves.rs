@@ -2702,7 +2702,8 @@ impl Intersection for LineSegment {
             // geo_clipper::JoinType::Round(10.0),
             geo_clipper::JoinType::Square,
             geo_clipper::EndType::ClosedPolygon,
-            1024.0,
+            // 1024.0,
+            4096.0,
         ).0.iter().map(
             |polygon| {
                 let (outer, inner) = polygon.clone().into_inner();

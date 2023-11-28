@@ -537,14 +537,16 @@ impl <T: std::io::Write> GCodeCreator<T> {
 
         if tool.tool_type().is_broad() {
             for sign in signs {
+                let mut sign = sign;
                 let mut fill_rect = range_map::FillRect::from(
                     sign.bounding_rect().min_x(), sign.bounding_rect().min_y(),
                     sign.bounding_rect().max_x(), sign.bounding_rect().max_y(),
                 );
 
                 let mut thick_sign = sign.clone();
-                if let cnc_router::ToolType::SpaceBetweenCutBroad(override_thinest_radius, shrink_by_radius)
-                    = tool.tool_type() {
+                if let cnc_router::ToolType::SpaceBetweenCutBroad(
+                    override_thinest_radius, shrink_by_radius, smaller_grow_by_radius
+                ) = tool.tool_type() {
 
                     // let increment = 2.0 * tool.radius * tool.offset;
                     let bigger_radius = if override_thinest_radius == 0.0 {
@@ -563,6 +565,14 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         !do_cut_on_odd,
                         &Vec::new(),
                     );
+
+                    if smaller_grow_by_radius != 0.0 {
+                        sign = sign.expand_lines(
+                            smaller_grow_by_radius,
+                            do_cut_on_odd,
+                            &Vec::new(),
+                        );
+                    }
                 }
 
                 let mut zero_range = range_map::FillRect::from(
@@ -573,13 +583,13 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 self.broad_smart_path2(
                     do_cut_on_odd,
                     &mut sign.expand_lines(tool.radius, do_cut_on_odd, &add_padding_to),
-                    if let cnc_router::ToolType::SpaceBetweenCutBroad(_, _) = tool.tool_type() {
+                    if let cnc_router::ToolType::SpaceBetweenCutBroad(_, _, _) = tool.tool_type() {
                         Some(&mut thick_sign)
                     } else {
                         None
                     },
                     &tool,
-                    if let cnc_router::ToolType::SpaceBetweenCutBroad(_, _) = tool.tool_type() {
+                    if let cnc_router::ToolType::SpaceBetweenCutBroad(_, _, _) = tool.tool_type() {
                         &mut zero_range
                     } else {
                         &mut fill_rect
@@ -1021,7 +1031,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 })
             );
         };
-
     }
 
     fn broad_smart_path2_helper<
@@ -1093,7 +1102,9 @@ impl <T: std::io::Write> GCodeCreator<T> {
         if only_cleanup {
             while !pockets.is_empty() {
                 let mut index = 0;
-                let current_point = self.cnc_router.get_point();
+                let mut current_point = self.cnc_router.get_point();
+                current_point.x -= 1.0;
+                current_point.y -= 0.5;
                 let mut best_distance = current_point.distance_to(&pockets[0]);
                 for i in 1..pockets.len() {
                     let distance = current_point.distance_to(&pockets[i]);
@@ -1148,10 +1159,27 @@ impl <T: std::io::Write> GCodeCreator<T> {
                     continue;
                 }
 
-                if let cnc_router::ToolType::PartialCutTextRadius(
-                    bigger_radius,
-                    shrink_by_radius,
-                ) = tool.tool_type() {
+                if let Some((bigger_radius, shrink_by_radius)) = 
+                    if let cnc_router::ToolType::PartialCutTextRadius(
+                        bigger_radius,
+                        shrink_by_radius,
+                    ) = tool.tool_type() {
+                        Some((
+                            bigger_radius,
+                            shrink_by_radius,
+                        ))
+                    } else if let cnc_router::ToolType::PartialCutTextRadiusOrAngle(
+                        previous_radius,
+                        extra_shrink_by,
+                        _,
+                        _,
+                    ) = tool.tool_type() {
+                        Some((
+                            previous_radius,
+                            extra_shrink_by,
+                        ))
+                    } else { None } 
+            {
                     let mut bigger_sign =
                         original_sign
                         .expand_lines(
@@ -1184,7 +1212,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                                 x, y, do_cut_on_odd, true,
                             ) &&
                             bigger_sign.sees_even_odd_lines_before(
-                                x, y, !do_cut_on_odd, false,
+                                x, y, !do_cut_on_odd, true,
                             )
                         }),
                     );
@@ -1206,12 +1234,15 @@ impl <T: std::io::Write> GCodeCreator<T> {
                     );
                 };
 
-                self.cnc_router.move_to_optional_coordinate(
-                    &cnc_router::OptionalCoordinate::from_z(
-                        Some(self.z_axis_off_cut)
-                    ),
-                    Some(tool.feed_rate_of_drill), false,
-                );
+                // Only move up if its down
+                if self.cnc_router.get_pos().z < self.z_axis_off_cut + tool.length {
+                    self.cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(self.z_axis_off_cut + tool.length)
+                        ),
+                        Some(tool.feed_rate_of_drill), false,
+                    );
+                }
             }
         }
     }

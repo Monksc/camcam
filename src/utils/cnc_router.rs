@@ -40,11 +40,14 @@ pub struct CNCRouter<T: std::io::Write> {
 pub enum ToolType {
     FullCutBroad,
     PartialCutBroad,
-    SpaceBetweenCutBroad(f64, f64), // bigger radius, extra shrink by
+    SpaceBetweenCutBroad(f64, f64, f64), // bigger radius, extra shrink by, grow by smaller
+                                         // (Should be = step over or 0)
     DontAddCutBroad,
     FullCutText,
-    PartialCutText(f64, f64), // angle, max length of cut
+    PartialCutText(f64, f64), // angle, bigger radius
     PartialCutTextRadius(f64, f64),  // bigger radius, extra shrink by
+    PartialCutTextRadiusOrAngle(f64, f64, f64, bool),  // bigger radius, extra shrink by, angle,
+                                                       // is braille
     Braille,
 }
 
@@ -69,11 +72,13 @@ impl ToolType {
         match self {
             ToolType::FullCutBroad => String::from("Full Cut Broad"),
             ToolType::PartialCutBroad => String::from("Partial Cut Broad"),
-            ToolType::SpaceBetweenCutBroad(_, _) => String::from("Space Between Cut Broad"),
+            ToolType::SpaceBetweenCutBroad(_, _, _) => String::from("Space Between Cut Broad"),
             ToolType::DontAddCutBroad => String::from("Don't Add Cut Broad"),
             ToolType::FullCutText => String::from("Full Cut Text"),
             ToolType::PartialCutText(_, _) => String::from("Partial Cut Text"),
             ToolType::PartialCutTextRadius(_, _) => String::from("Partial Cut Text Radius"),
+            ToolType::PartialCutTextRadiusOrAngle(_, _, _, _) =>
+                String::from("Partial Cut Text Radius Or Angle"),
             ToolType::Braille => String::from("Braille"),
         }
     }
@@ -81,12 +86,13 @@ impl ToolType {
         match self {
             ToolType::FullCutBroad => 0,
             ToolType::PartialCutBroad => 1,
-            ToolType::SpaceBetweenCutBroad(_, _) => 2,
+            ToolType::SpaceBetweenCutBroad(_, _, _) => 2,
             ToolType::DontAddCutBroad => 3,
             ToolType::FullCutText => 4,
             ToolType::PartialCutText(_, _) => 5,
             ToolType::PartialCutTextRadius(_, _) => 6,
-            ToolType::Braille => 7,
+            ToolType::PartialCutTextRadiusOrAngle(_, _, _, _) => 7,
+            ToolType::Braille => 8,
         }
     }
     pub fn full_cut(self) -> bool {
@@ -105,6 +111,8 @@ impl ToolType {
             true
         } else if let ToolType::PartialCutTextRadius(_, _) = self {
             true
+        } else if let ToolType::PartialCutTextRadiusOrAngle(_, _, _, _) = self {
+            true
         } else {
             false
         }
@@ -114,6 +122,8 @@ impl ToolType {
         ToolType::Braille == self ||
         if let ToolType::PartialCutTextRadius(_, _) = self {
             true
+        } else if let ToolType::PartialCutTextRadiusOrAngle(_, _, _, is_braille) = self {
+            is_braille
         } else {
             false
         }
@@ -122,7 +132,7 @@ impl ToolType {
     pub fn is_broad(self) -> bool {
         ToolType::FullCutBroad == self ||
         ToolType::PartialCutBroad == self ||
-        if let ToolType::SpaceBetweenCutBroad(_, _) = self {
+        if let ToolType::SpaceBetweenCutBroad(_, _, _) = self {
             true
         } else {
             false
@@ -1935,7 +1945,7 @@ pub trait CNCPath {
 
                 if angle.is_nan() ||
                     angle >= std::f64::consts::PI ||
-                    (*max_angle > 0.0 && angle >= *max_angle) {
+                    (*max_angle > 0.0 && angle > *max_angle) {
                     if !is_up {
                         cnc_router.move_to_optional_coordinate(
                             &cnc_router::OptionalCoordinate::from_z(
@@ -1967,6 +1977,181 @@ pub trait CNCPath {
                     djk * new_points[k].distance_to(&new_points[j]) + new_points[j]
                 } else {
                     djk * length_from_point_j + new_points[j]
+                };
+
+                if !is_up && cnc_router.get_point().distance_to(
+                    &ij_point
+                ) * feed_rate.unwrap_or(cnc_router.get_feed_rate()) > (
+                    2.0 * feed_rate_of_drill * depth_of_cut
+                ).abs() {
+                    cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(z_axis_of_cut)
+                        ),
+                        Some(feed_rate_of_drill), false,
+                    );
+                    is_up = true;
+                }
+
+                if is_up {
+                    cnc_router.move_to_coordinate_rapid(
+                        &cnc_router::Coordinate::from(
+                            ij_point.x, ij_point.y, z_axis_of_cut
+                        )
+                    );
+
+                    cnc_router.move_to_optional_coordinate(
+                        &cnc_router::OptionalCoordinate::from_z(
+                            Some(z_axis_of_cut + depth_of_cut)
+                        ),
+                        Some(feed_rate_of_drill), false,
+                    );
+                    is_up = false;
+                }
+
+                cnc_router.move_to_optional_coordinate(
+                    &OptionalCoordinate::from(
+                        Some(new_points[j].x),
+                        Some(new_points[j].y),
+                        None,
+                    ),
+                    feed_rate, false,
+                );
+                cnc_router.move_to_optional_coordinate(
+                    &OptionalCoordinate::from(
+                        Some(jk_point.x),
+                        Some(jk_point.y),
+                        None,
+                    ),
+                    feed_rate, false,
+                );
+            }
+        } else if let ToolType::PartialCutTextRadiusOrAngle(previous_radius, _, max_angle, _) = tool_type {
+            let mut is_up = true;
+            for i in 0..new_points.len() {
+                let j = (i+1) % new_points.len();
+                let k = (i+2) % new_points.len();
+
+                let angle = lines_and_curves::Point::right_angle(
+                    &new_points[i],
+                    &new_points[j],
+                    &new_points[k],
+                );
+
+                let angle = if cut_inside {
+                    2.0 * std::f64::consts::PI - angle
+                } else {
+                    angle
+                };
+
+                let mut farthest_point_needs_to_be_cut_ij = None;
+                let distance_ij = new_points[i].distance_to(&new_points[j]);
+                let n = 4 * (distance_ij / tool_radius).ceil() as usize;
+                for li in 0..=n {
+                    let prob = 0.5 - (li as f64 / n as f64) / 2.0;
+                    let x = new_points[i].x * prob + new_points[j].x * (1.0 - prob);
+                    let y = new_points[i].y * prob + new_points[j].y * (1.0 - prob);
+                    if can_cut(
+                        x, y,
+                    ) {
+                        farthest_point_needs_to_be_cut_ij = Some(
+                            lines_and_curves::Point::from(
+                                x, y,
+                            )
+                        );
+                        break;
+                    }
+                }
+
+                let mut farthest_point_needs_to_be_cut_jk = None;
+                let distance_jk = new_points[j].distance_to(&new_points[k]);
+                let n = 4 * (distance_jk / tool_radius).ceil() as usize;
+                for li in 0..=n {
+                    let prob = 0.5 - (li as f64 / n as f64) / 2.0;
+                    let x = new_points[k].x * prob + new_points[j].x * (1.0 - prob);
+                    let y = new_points[k].y * prob + new_points[j].y * (1.0 - prob);
+                    if can_cut(
+                        x, y,
+                    ) {
+                        farthest_point_needs_to_be_cut_jk = Some(
+                            lines_and_curves::Point::from(
+                                x, y,
+                            )
+                        );
+                        break;
+                    }
+                }
+
+                let needs_cut_tight_angle = !(
+                    angle.is_nan() ||
+                    angle >= std::f64::consts::PI ||
+                    (*max_angle > 0.0 && angle > *max_angle)
+                );
+
+                if !(
+                    if let Some(_) = farthest_point_needs_to_be_cut_ij { true } else { false } ||
+                    if let Some(_) = farthest_point_needs_to_be_cut_jk { true } else { false } ||
+                    needs_cut_tight_angle
+                ) {
+                    if !is_up {
+                        cnc_router.move_to_optional_coordinate(
+                            &cnc_router::OptionalCoordinate::from_z(
+                                Some(z_axis_of_cut)
+                            ),
+                            Some(feed_rate_of_drill), false,
+                        );
+                        is_up = true;
+                    }
+                    continue;
+                }
+
+                // TODO: Maybe it should be (*previous_radius - tool_radius)
+                // or length - tool_radius
+                // let length_from_point_j = (*previous_radius - tool_radius) / (angle / 2.0).tan();
+                let length_from_point_j = *previous_radius / (angle / 2.0).tan();
+
+                let dji = (new_points[i] - new_points[j]).normalize();
+                let djk = (new_points[k] - new_points[j]).normalize();
+
+                let ij_point = if
+                    length_from_point_j <
+                    distance_ij / 2.0
+                    && if let Some(_) = farthest_point_needs_to_be_cut_ij { true } else { false }
+                {
+                    if let Some(point) = farthest_point_needs_to_be_cut_ij {
+                        point
+                    } else {
+                        (new_points[i] + new_points[j]) / 2.0
+                    }
+                } else if needs_cut_tight_angle && (
+                    length_from_point_j >
+                    distance_ij
+                ) {
+                    dji * distance_ij + new_points[j]
+                } else if needs_cut_tight_angle {
+                    dji * length_from_point_j + new_points[j]
+                } else {
+                    new_points[j]
+                };
+
+                let jk_point = if
+                    length_from_point_j < distance_jk / 2.0 &&
+                    if let Some(_) = farthest_point_needs_to_be_cut_jk { true } else { false }
+                {
+                    if let Some(point) = farthest_point_needs_to_be_cut_jk {
+                        point
+                    } else {
+                        (new_points[j] + new_points[k]) / 2.0
+                    }
+                } else if needs_cut_tight_angle && (
+                    length_from_point_j >
+                    distance_jk
+                ) {
+                    djk * distance_jk + new_points[j]
+                } else if needs_cut_tight_angle {
+                    djk * length_from_point_j + new_points[j]
+                } else {
+                    new_points[j]
                 };
 
                 if !is_up && cnc_router.get_point().distance_to(
