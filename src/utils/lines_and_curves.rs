@@ -2,9 +2,32 @@
 // /src/utils/lines_and_curves.rs
 use super::*;
 
+const GEO_TYPES_FACTOR : f64 = (1 << 12) as f64;
+
 pub trait Intersection {
     fn find_significant_xs(&self) -> Vec<f64>;
     fn y(&self, next: &Self, x: f64) -> Vec<(f64, bool)>;
+    fn ys(
+        items: &Vec<Self>,
+        x: f64,
+    ) -> Vec<(f64, bool)>
+        where Self : Sized
+    {
+        let mut ys = Vec::new();
+
+        for i in 0..items.len() {
+            let j = (i+1) % items.len();
+            ys.append(
+                &mut Intersection::y(
+                    &items[i],
+                    &items[j],
+                    x,
+                ),
+            );
+        }
+
+        return ys;
+    }
     fn is_inside<
         T: Intersection
     >(intersections: &Vec<T>, x: f64, y: f64) -> bool {
@@ -87,6 +110,7 @@ pub trait Intersection {
 
     fn remove_touching_shapes(
         shapes: &Vec<(Vec<Self>, bool)>,
+        is_growing: bool,
     ) -> Vec<(Vec<Self>, bool)> where Self : Sized;
     // fn lines_below_point(shape: &Vec<Box<Self>>, point: Point) -> usize {
     //     let mut count = 0;
@@ -262,6 +286,11 @@ impl Rectangle {
 
     pub fn contains_point(&self, point: Point) -> bool {
         self.contains_x(point.x) && self.contains_y(point.y)
+    }
+
+    pub fn contains_rect(&self, rect: &Self) -> bool {
+        self.contains_point(rect.start_point) && 
+        self.contains_point(rect.end_point)
     }
 
     pub fn min_x(&self) -> f64 {
@@ -1036,7 +1065,7 @@ impl LineSegment {
         Self::from_multipolygon(
             &poly1.union(
                 &poly2,
-                1024.0,
+                GEO_TYPES_FACTOR,
             ),
             can_cut_in_outer,
         )
@@ -1063,7 +1092,7 @@ impl LineSegment {
         Self::from_multipolygon(
             &poly1.difference(
                 &poly2,
-                1024.0,
+                GEO_TYPES_FACTOR,
             ),
             can_cut_in_outer,
         )
@@ -2522,6 +2551,69 @@ impl LineSegment {
         return new_lines;
     }
 
+    pub fn remove_uncessary_polygons(
+        mut polygons: Vec<(Vec<Self>, bool)>
+    ) -> Vec<(Vec<Self>, bool)> {
+        let mut i = 0;
+        while i < polygons.len() {
+            let Some((iy, ix)) = polygons[i].0
+                .iter()
+                .map(|x| (x.p1.y, x.p1.x))
+                .min_by(|a, b| a.partial_cmp(b).unwrap())
+            else {
+                continue;
+            };
+
+            // check if polygon[i] is useless
+            let mut highest_point = None;
+            for j in 0..polygons.len() {
+                if i == j {
+                    continue;
+                }
+
+
+                let mut highest_point_temp = None;
+                for y in Intersection::ys(
+                    &polygons[j].0,
+                    ix,
+                ) {
+                    if y.0 < iy {
+                        if let Some((highest_point_y, _, _)) = highest_point_temp {
+                            if highest_point_y < y.0 {
+                                highest_point_temp = Some((y.0, j, y.1));
+                            }
+                        } else {
+                            highest_point_temp = Some((y.0, j, y.1));
+                        }
+                    }
+                }
+
+                if let Some((new_y, j, is_good)) = highest_point_temp {
+                    if is_good {
+                        if let Some((y, _)) = highest_point {
+                            if new_y > y {
+                                highest_point = Some((new_y, j));
+                            }
+                        } else {
+                            highest_point = Some((new_y, j));
+                        }
+                    }
+                }
+            }
+
+            if let Some((_, j)) = highest_point {
+                if polygons[i].1 == polygons[j].1 {
+                    polygons.remove(i);
+                    continue;
+                }
+            }
+
+            i += 1;
+        }
+
+        return polygons;
+    }
+
     pub fn print_python_code_to_graph(lines: &Vec<Self>) {
         eprintln!("import matplotlib.pyplot as plt\n");
         for line in lines {
@@ -2698,12 +2790,15 @@ impl Intersection for LineSegment {
             } else {
                 bit_radius
             },
-            // geo_clipper::JoinType::Miter(10.0),
-            // geo_clipper::JoinType::Round(10.0),
-            geo_clipper::JoinType::Square,
+            // geo_clipper::JoinType::Miter(bit_radius),
+            // geo_clipper::JoinType::Square,
+            if bit_radius < 0.0 {
+                geo_clipper::JoinType::Round(bit_radius)
+            } else {
+                geo_clipper::JoinType::Square
+            },
             geo_clipper::EndType::ClosedPolygon,
-            // 1024.0,
-            4096.0,
+            GEO_TYPES_FACTOR,
         ).0.iter().map(
             |polygon| {
                 let (outer, inner) = polygon.clone().into_inner();
@@ -3046,6 +3141,7 @@ impl Intersection for LineSegment {
 
     fn remove_touching_shapes(
         shapes: &Vec<(Vec<Self>, bool)>,
+        is_growing: bool,
     ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         if shapes.len() == 0 {
             return Vec::new();
@@ -3062,8 +3158,8 @@ impl Intersection for LineSegment {
                         let shape_i_can_cut = shapes[i].1;
                         let shape_j_can_cut = shapes[j].1;
 
-                        if shape_i_can_cut == shape_j_can_cut {
-                            let mut union = Self::union(
+                        let new_piece = if shape_i_can_cut == shape_j_can_cut {
+                            let union = Self::union(
                                 &shapes[i].0, &shapes[j].0, shape_i_can_cut,
                             );
                             if union.len() == 2 &&
@@ -3071,22 +3167,23 @@ impl Intersection for LineSegment {
                                 union[1].1 == shape_j_can_cut {
                                     continue;
                             }
-                            shapes.append(
-                                &mut union
+                            union
+                        } else if shape_i_can_cut == is_growing {
+                            let differance = Self::differance(
+                                &shapes[i].0, &shapes[j].0, shape_i_can_cut,
                             );
-                        } else if shape_i_can_cut {
-                            shapes.append(
-                                &mut Self::differance(
-                                    &shapes[i].0, &shapes[j].0, shape_i_can_cut,
-                                ),
-                            );
+                            differance
                         } else {
-                            shapes.append(&mut Self::differance(
-                                &shapes[j].0, &shapes[i].0, shape_j_can_cut));
+                            Self::differance(&shapes[j].0, &shapes[i].0, shape_j_can_cut)
+                        };
+
+                        if j == i + 1 {
+                            shapes.splice(i..(j+1), new_piece);
+                        } else {
+                            shapes.remove(j);
+                            shapes.splice(i..(i+1), new_piece);
                         }
 
-                        shapes.swap_remove(j);
-                        shapes.swap_remove(i);
                         found_intersection = true;
                         break 'intersection_searcher;
                     }
@@ -3094,7 +3191,17 @@ impl Intersection for LineSegment {
             }
         }
 
-        return shapes.clone();
+        let mut poly_tree = polygon_tree::PolygonTree::from(&shapes);
+        let (can, not) = poly_tree.total_can_cuts();
+        poly_tree.set_outer_can_cut_inside(can < not);
+        let mut indexes = poly_tree.remove_inner_of_same_cut();
+        indexes.sort();
+        for index in indexes.into_iter().rev() {
+            shapes.remove(index);
+        }
+
+        return shapes;
+        // return LineSegment::remove_uncessary_polygons(shapes.clone());
 
         /*
 
@@ -3275,6 +3382,7 @@ impl Intersection for Rectangle {
 
     fn remove_touching_shapes(
         shapes: &Vec<(Vec<Self>, bool)>,
+        is_growing: bool,
     ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         return shapes.iter().map(|x| {
             x.clone()
@@ -3438,6 +3546,7 @@ impl Intersection for Circle {
 
     fn remove_touching_shapes(
         shapes: &Vec<(Vec<Self>, bool)>,
+        is_growing: bool,
     ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         return shapes.iter().map(|x| {
             x.clone()
@@ -3867,6 +3976,7 @@ impl Intersection for AllIntersections {
 
     fn remove_touching_shapes(
         shapes: &Vec<(Vec<Self>, bool)>,
+        is_growing: bool,
     ) -> Vec<(Vec<Self>, bool)> where Self : Sized {
         let mut line_segment_shapes = Vec::new();
         let mut soft_line_segment_shapes = Vec::new();
@@ -3921,9 +4031,11 @@ impl Intersection for AllIntersections {
 
         let line_segment_shapes = Intersection::remove_touching_shapes(
             &line_segment_shapes,
+            is_growing,
         );
         let soft_line_segment_shapes = Intersection::remove_touching_shapes(
             &soft_line_segment_shapes,
+            is_growing,
         );
 
         let mut r = Vec::new();
@@ -4096,6 +4208,7 @@ impl cnc_router::CNCPath for AllIntersections {
         depth_of_cut: f64, // only in effect iff force_drill
         tool_type: &cnc_router::ToolType,
         tool_radius: f64,
+        tool_offset: f64,
         cut_inside: bool,
         mut can_cut: Box::<impl FnMut(f64, f64) -> bool>,
     ) -> bool where Self : Sized {
@@ -4117,6 +4230,7 @@ impl cnc_router::CNCPath for AllIntersections {
                 depth_of_cut,
                 tool_type,
                 tool_radius,
+                tool_offset,
                 cut_inside,
                 can_cut,
             )
@@ -4137,6 +4251,7 @@ impl cnc_router::CNCPath for AllIntersections {
                 depth_of_cut,
                 tool_type,
                 tool_radius,
+                tool_offset,
                 cut_inside,
                 can_cut,
             )
@@ -4154,6 +4269,7 @@ impl cnc_router::CNCPath for AllIntersections {
                 depth_of_cut,
                 tool_type,
                 tool_radius,
+                tool_offset,
                 cut_inside,
                 can_cut,
             )
@@ -4171,6 +4287,7 @@ impl cnc_router::CNCPath for AllIntersections {
                 depth_of_cut,
                 tool_type,
                 tool_radius,
+                tool_offset,
                 cut_inside,
                 can_cut,
             )

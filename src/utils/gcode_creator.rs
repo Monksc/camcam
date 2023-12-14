@@ -1,7 +1,21 @@
 #![allow(dead_code)]
 use super::*;
 use std::sync::mpsc;
+
 use std::thread;
+use std::sync::{Arc, Mutex};
+
+use once_cell::sync::Lazy;
+static TOTAL_THREADS: Lazy<Mutex<u32>> = Lazy::new(||  Mutex::new(8));
+static THREADS_IN_USE: Lazy<Mutex<u32>> = Lazy::new(||  Mutex::new(0));
+
+pub fn set_threads(mut thread_count: u32) {
+    if thread_count < 4 {
+        thread_count = 4;
+    }
+    let mut total_threads = TOTAL_THREADS.lock().unwrap();
+    *total_threads = thread_count;
+}
 
 struct ThreadWriter {
     sender: std::sync::mpsc::Sender<String>,
@@ -278,9 +292,9 @@ impl <T: std::io::Write> GCodeCreator<T> {
 
         self.cnc_router.write_gcode_comment_str("Following Shapes");
         for tool_type in vec![
-            cnc_router::ToolType::FullCutText,
-            cnc_router::ToolType::PartialCutText(0.0, 0.0),
-            cnc_router::ToolType::Braille
+            cnc_router::ToolType::full_text(),
+            cnc_router::ToolType::PartialContourAngle(0.0, 0.0, cnc_router::ShapeType::all()),
+            cnc_router::ToolType::full_braille(),
         ] {
             for (tool_index, tool) in tools.iter().enumerate() {
                 if tool_type.raw_value() != tool.tool_type.raw_value() {
@@ -517,7 +531,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
         &mut self,
         do_cut_on_odd: bool,
         signs : Vec<sign::Sign<J> >,
-        add_padding_to: Vec<(cnc_router::ToolType, f64)>,
+        add_padding_to: Vec<(cnc_router::ShapeType, f64)>,
         tool_index: usize,
         tool: cnc_router::Tool,
         thinnest_radius_seen: f64,
@@ -538,6 +552,9 @@ impl <T: std::io::Write> GCodeCreator<T> {
         if tool.tool_type().is_broad() {
             for sign in signs {
                 let mut sign = sign;
+                let increment = 2.0 * tool.radius * tool.offset;
+                sign.add_xs_layers(sign.bounding_rect().min_x(), increment);
+
                 let mut fill_rect = range_map::FillRect::from(
                     sign.bounding_rect().min_x(), sign.bounding_rect().min_y(),
                     sign.bounding_rect().max_x(), sign.bounding_rect().max_y(),
@@ -561,8 +578,8 @@ impl <T: std::io::Write> GCodeCreator<T> {
                     thick_sign = thick_sign.expand_lines(
                         // tool.radius - bigger_radius - 1.1 * tool.radius * tool.offset,
                         // do_cut_on_odd,
-                        bigger_radius - tool.radius + shrink_by_radius,
-                        !do_cut_on_odd,
+                        -(bigger_radius - tool.radius + shrink_by_radius),
+                        do_cut_on_odd,
                         &Vec::new(),
                     );
 
@@ -627,7 +644,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
         &mut self,
         do_cut_on_odd: bool,
         signs : &Vec<sign::Sign<J> >,
-        add_padding_to: &Vec<(cnc_router::ToolType, f64)>,
+        add_padding_to: &Vec<(cnc_router::ShapeType, f64)>,
     ) {
         use std::time::Instant;
         let begining = Instant::now();
@@ -655,6 +672,19 @@ impl <T: std::io::Write> GCodeCreator<T> {
                 let tool = tool.clone();
                 let add_padding_to = add_padding_to.clone();
                 let signs = signs.clone();
+
+                // Make sure we have empty threads
+                while true {
+                    let total_threads = TOTAL_THREADS.lock().unwrap();
+                    let mut threads_in_use = THREADS_IN_USE.lock().unwrap();
+
+                    if *threads_in_use < *total_threads {
+                        *threads_in_use += 1;
+                        break;
+                    }
+                    thread::sleep(std::time::Duration::from_millis(4000));
+                }
+
                 let handle = thread::spawn(move || {
                     copy_self.build_gcode_smart_path_helepr(
                         do_cut_on_odd,
@@ -665,6 +695,8 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         thinnest_radius_seen,
                     );
                 });
+                let mut threads_in_use = THREADS_IN_USE.lock().unwrap();
+                *threads_in_use -= 1;
                 handlers.push((handle, rx));
             }
             if tool.tool_type().is_broad() {
@@ -775,6 +807,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                             self.depth_of_cut,
                             &tool.tool_type(),
                             tool.radius,
+                            tool.offset,
                             false,
                             Box::from(|x, y| {
                                 methods(CutBroadSmartPathMethodArguments::CanCut(x, y)).can_cut()
@@ -901,24 +934,6 @@ impl <T: std::io::Write> GCodeCreator<T> {
             );
         }
     }
-
-    fn find_pockets<
-        J : lines_and_curves::Intersection +
-        std::fmt::Debug + Clone + cnc_router::CNCPath
-    > (
-        &mut self,
-        do_cut_on_odd: bool,
-        sign : &mut sign::Sign<J>,
-        mut bigger_sign : Option<&mut sign::Sign<J>>,
-        tool: &cnc_router::Tool,
-        mut fill_rect : &mut range_map::FillRect,
-        only_cleanup: bool,
-    ) -> Vec<lines_and_curves::Point> {
-        let mut pockets = Vec::new();
-
-        return pockets;
-    }
-
 
     pub fn broad_smart_path2<
         J : lines_and_curves::Intersection +
@@ -1147,28 +1162,42 @@ impl <T: std::io::Write> GCodeCreator<T> {
         &mut self,
         do_cut_on_odd: bool,
         signs : &Vec<sign::Sign<J> >,
-        add_padding_to: &Vec<(cnc_router::ToolType, f64)>,
+        add_padding_to: &Vec<(cnc_router::ShapeType, f64)>,
         tool: &cnc_router::Tool,
     ) {
         for original_sign in signs {
 
-            let mut sign = original_sign.expand_lines(tool.radius, do_cut_on_odd, add_padding_to);
+            let mut sign = original_sign
+                .expand_lines(tool.radius, do_cut_on_odd, add_padding_to);
+            if let cnc_router::ToolType::FullContour(
+                _,
+                shrink_by
+            ) = tool.tool_type {
+                if shrink_by != 0.0 {
+                    sign = sign.expand_lines(
+                        -shrink_by,
+                        do_cut_on_odd,
+                        &Vec::new(),
+                    );
+                }
+            }
             let shapes = sign.shapes_cut_inside(do_cut_on_odd);
             for (shape, cut_inside) in shapes {
-                if !shape.tool_type().is_same_type(&tool.tool_type()) {
+                if !shape.tool_type().subset_of(&tool.tool_type().to_shape_type()) {
                     continue;
                 }
 
                 if let Some((bigger_radius, shrink_by_radius)) = 
-                    if let cnc_router::ToolType::PartialCutTextRadius(
+                    if let cnc_router::ToolType::PartialContourRadius(
                         bigger_radius,
                         shrink_by_radius,
+                        _,
                     ) = tool.tool_type() {
                         Some((
                             bigger_radius,
                             shrink_by_radius,
                         ))
-                    } else if let cnc_router::ToolType::PartialCutTextRadiusOrAngle(
+                    } else if let cnc_router::ToolType::PartialContourRadiusOrAngle(
                         previous_radius,
                         extra_shrink_by,
                         _,
@@ -1184,14 +1213,13 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         original_sign
                         .expand_lines(
                             // bigger_radius + 0.2 * tool.radius * tool.offset, do_cut_on_odd, add_padding_to
-                            bigger_radius, do_cut_on_odd, add_padding_to
+                            bigger_radius,
+                            do_cut_on_odd,
+                            add_padding_to,
                         )
                         .expand_lines(
-                            // tool.radius - bigger_radius - 0.5 * tool.radius * tool.offset,
-                            // do_cut_on_odd,
-                            // bigger_radius - tool.radius + 0.1 * tool.radius * tool.offset,
-                            bigger_radius - tool.radius + shrink_by_radius,
-                            !do_cut_on_odd,
+                            -(bigger_radius - tool.radius + shrink_by_radius),
+                            do_cut_on_odd,
                             &Vec::new(),
                         );
                     cnc_router::CNCPath::cut_till::<T>(
@@ -1206,13 +1234,11 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         self.depth_of_cut+tool.length,
                         &tool.tool_type(),
                         tool.radius,
+                        tool.offset,
                         cut_inside,
                         Box::from(|x: f64, y: f64| {
-                            sign.sees_even_odd_lines_before(
+                            !bigger_sign.sees_even_odd_lines_before(
                                 x, y, do_cut_on_odd, true,
-                            ) &&
-                            bigger_sign.sees_even_odd_lines_before(
-                                x, y, !do_cut_on_odd, true,
                             )
                         }),
                     );
@@ -1229,6 +1255,7 @@ impl <T: std::io::Write> GCodeCreator<T> {
                         self.depth_of_cut+tool.length,
                         &tool.tool_type(),
                         tool.radius,
+                        tool.offset,
                         cut_inside,
                         Box::from(|_, _| true)
                     );

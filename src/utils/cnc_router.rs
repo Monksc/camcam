@@ -36,6 +36,57 @@ pub struct CNCRouter<T: std::io::Write> {
     exact_stop_change_y: bool,
 }
 
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShapeType(u8);
+impl ShapeType {
+    const NONE : u8 = 0;
+    const TEXT : u8 = 1<<0;
+    const BRAILLE : u8 = 1<<1;
+    const ALL : u8 = (1<<2) - 1;
+
+    pub fn new() -> Self {
+        Self(ShapeType::NONE)
+    }
+
+    pub fn text() -> Self {
+        Self(Self::TEXT)
+    }
+    pub fn braille() -> Self {
+        Self(Self::BRAILLE)
+    }
+    pub fn all() -> Self {
+        Self(Self::ALL)
+    }
+
+    fn is_type(&self, bitmap: u8) -> bool {
+        (self.0 & bitmap) == bitmap
+    }
+    fn set_type(&mut self, bitmap: u8, is_on: bool) {
+        if is_on {
+            self.0 |= bitmap
+        } else {
+            self.0 &= self.0 ^ bitmap
+        }
+    }
+    pub fn is_text(&self) -> bool {
+        self.is_type(ShapeType::TEXT)
+    }
+    pub fn is_braille(&self) -> bool {
+        self.is_type(ShapeType::BRAILLE)
+    }
+
+    pub fn set_text(&mut self, value: bool) {
+        self.set_type(ShapeType::TEXT, value)
+    }
+    pub fn set_braille(&mut self, value: bool) {
+        self.set_type(ShapeType::BRAILLE, value)
+    }
+
+    pub fn subset_of(&self, other: &Self) -> bool {
+        (self.0 & other.0) == self.0
+    }
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum ToolType {
     FullCutBroad,
@@ -43,12 +94,10 @@ pub enum ToolType {
     SpaceBetweenCutBroad(f64, f64, f64), // bigger radius, extra shrink by, grow by smaller
                                          // (Should be = step over or 0)
     DontAddCutBroad,
-    FullCutText,
-    PartialCutText(f64, f64), // angle, bigger radius
-    PartialCutTextRadius(f64, f64),  // bigger radius, extra shrink by
-    PartialCutTextRadiusOrAngle(f64, f64, f64, bool),  // bigger radius, extra shrink by, angle,
-                                                       // is braille
-    Braille,
+    FullContour(ShapeType, f64), // shape then shrink by (used for debug)
+    PartialContourAngle(f64, f64, ShapeType), // angle, bigger radius
+    PartialContourRadius(f64, f64, ShapeType),  // bigger radius, extra shrink by
+    PartialContourRadiusOrAngle(f64, f64, f64, ShapeType),  // bigger radius, extra shrink by, angle,
 }
 
 impl PartialEq for ToolType {
@@ -68,18 +117,36 @@ impl std::hash::Hash for ToolType {
 }
 
 impl ToolType {
+    pub fn full_text() -> Self {
+        Self::FullContour(
+            ShapeType::text(),
+            0.0,
+        )
+    }
+    pub fn full_braille() -> Self {
+        Self::FullContour(
+            ShapeType::braille(),
+            0.0,
+        )
+    }
+    pub fn full_contour_all() -> Self {
+        Self::FullContour(
+            ShapeType::all(),
+            0.0,
+        )
+    }
+
     pub fn description(&self) -> String {
         match self {
             ToolType::FullCutBroad => String::from("Full Cut Broad"),
             ToolType::PartialCutBroad => String::from("Partial Cut Broad"),
             ToolType::SpaceBetweenCutBroad(_, _, _) => String::from("Space Between Cut Broad"),
             ToolType::DontAddCutBroad => String::from("Don't Add Cut Broad"),
-            ToolType::FullCutText => String::from("Full Cut Text"),
-            ToolType::PartialCutText(_, _) => String::from("Partial Cut Text"),
-            ToolType::PartialCutTextRadius(_, _) => String::from("Partial Cut Text Radius"),
-            ToolType::PartialCutTextRadiusOrAngle(_, _, _, _) =>
-                String::from("Partial Cut Text Radius Or Angle"),
-            ToolType::Braille => String::from("Braille"),
+            ToolType::FullContour(_, _) => String::from("Full Contour"),
+            ToolType::PartialContourAngle(_, _, _) => String::from("Partial Contour Angle"),
+            ToolType::PartialContourRadius(_, _, _) => String::from("Partial Contour Radius"),
+            ToolType::PartialContourRadiusOrAngle(_, _, _, _) =>
+                String::from("Partial Contour Radius Or Angle"),
         }
     }
     pub fn raw_value(&self) -> u32 {
@@ -88,17 +155,16 @@ impl ToolType {
             ToolType::PartialCutBroad => 1,
             ToolType::SpaceBetweenCutBroad(_, _, _) => 2,
             ToolType::DontAddCutBroad => 3,
-            ToolType::FullCutText => 4,
-            ToolType::PartialCutText(_, _) => 5,
-            ToolType::PartialCutTextRadius(_, _) => 6,
-            ToolType::PartialCutTextRadiusOrAngle(_, _, _, _) => 7,
-            ToolType::Braille => 8,
+            ToolType::FullContour(_, _) => 4,
+            ToolType::PartialContourAngle(_, _, _) => 5,
+            ToolType::PartialContourRadius(_, _, _) => 6,
+            ToolType::PartialContourRadiusOrAngle(_, _, _, _) => 7,
         }
     }
     pub fn full_cut(self) -> bool {
         self == ToolType::FullCutBroad ||
-            self == ToolType::FullCutText ||
-            self == ToolType::Braille
+            if let ToolType::FullContour(_, _) = self
+            { true } else { false }
     }
 
     pub fn dont_add_cut(self) -> bool {
@@ -106,24 +172,28 @@ impl ToolType {
     }
 
     pub fn is_text(self) -> bool {
-        ToolType::FullCutText == self ||
-        if let ToolType::PartialCutText(_, _) = self {
-            true
-        } else if let ToolType::PartialCutTextRadius(_, _) = self {
-            true
-        } else if let ToolType::PartialCutTextRadiusOrAngle(_, _, _, _) = self {
-            true
+        if let ToolType::FullContour(shape_type, _) = self {
+            shape_type.is_text()
+        } else if let ToolType::PartialContourAngle(_, _, shape_type) = self {
+            shape_type.is_text()
+        } else if let ToolType::PartialContourRadius(_, _, shape_type) = self {
+            shape_type.is_text()
+        } else if let ToolType::PartialContourRadiusOrAngle(_, _, _, shape_type) = self {
+            shape_type.is_text()
         } else {
             false
         }
     }
 
     pub fn is_braille(self) -> bool {
-        ToolType::Braille == self ||
-        if let ToolType::PartialCutTextRadius(_, _) = self {
-            true
-        } else if let ToolType::PartialCutTextRadiusOrAngle(_, _, _, is_braille) = self {
-            is_braille
+        if let ToolType::FullContour(shape_type, _) = self {
+            shape_type.is_braille()
+        } else if let ToolType::PartialContourAngle(_, _, shape_type) = self {
+            shape_type.is_braille()
+        } else if let ToolType::PartialContourRadius(_, _, shape_type) = self {
+            shape_type.is_braille()
+        } else if let ToolType::PartialContourRadiusOrAngle(_, _, _, shape_type) = self {
+            shape_type.is_braille()
         } else {
             false
         }
@@ -144,6 +214,18 @@ impl ToolType {
         (self.is_text() && other.is_text()) ||
         (self.is_braille() && other.is_braille()) ||
         (self.is_broad() && other.is_broad())
+    }
+
+    pub fn to_shape_type(&self) -> ShapeType {
+        let mut shape_type = ShapeType::new();
+        if self.is_text() {
+            shape_type.set_text(true);
+        }
+        if self.is_braille() {
+            shape_type.set_braille(true);
+        }
+
+        return shape_type;
     }
 
     pub fn is_text_or_braille(&self) -> bool {
@@ -1799,6 +1881,7 @@ pub trait CNCPath {
         depth_of_cut: f64, // only in effect iff force_drill
         tool_type: &ToolType,
         tool_radius: f64,
+        tool_offset: f64,
         cut_inside: bool,
         mut can_cut: Box::<impl FnMut(f64, f64) -> bool>
     ) -> bool where Self : Sized {
@@ -1925,7 +2008,7 @@ pub trait CNCPath {
             }
         } else if let Some(y) = y {
 
-        } else if let ToolType::PartialCutText(max_angle, previous_radius) = tool_type {
+        } else if let ToolType::PartialContourAngle(max_angle, previous_radius, _) = tool_type {
             let mut is_up = true;
             for i in 0..new_points.len() {
                 let j = (i+1) % new_points.len();
@@ -2026,7 +2109,7 @@ pub trait CNCPath {
                     feed_rate, false,
                 );
             }
-        } else if let ToolType::PartialCutTextRadiusOrAngle(previous_radius, _, max_angle, _) = tool_type {
+        } else if let ToolType::PartialContourRadiusOrAngle(previous_radius, _, max_angle, _) = tool_type {
             let mut is_up = true;
             for i in 0..new_points.len() {
                 let j = (i+1) % new_points.len();
@@ -2044,43 +2127,54 @@ pub trait CNCPath {
                     angle
                 };
 
-                let mut farthest_point_needs_to_be_cut_ij = None;
-                let distance_ij = new_points[i].distance_to(&new_points[j]);
-                let n = 4 * (distance_ij / tool_radius).ceil() as usize;
-                for li in 0..=n {
-                    let prob = 0.5 - (li as f64 / n as f64) / 2.0;
-                    let x = new_points[i].x * prob + new_points[j].x * (1.0 - prob);
-                    let y = new_points[i].y * prob + new_points[j].y * (1.0 - prob);
-                    if can_cut(
-                        x, y,
-                    ) {
-                        farthest_point_needs_to_be_cut_ij = Some(
-                            lines_and_curves::Point::from(
-                                x, y,
-                            )
-                        );
-                        break;
-                    }
-                }
+                let mut find_farthest_point_needs_to_be_cut = |
+                    distance_line : f64,
+                    farther_point: lines_and_curves::Point,
+                | {
+                    let mut farthest_point_needs_to_be_cut = None;
+                    let n = (distance_line / (2.0 * tool_offset * tool_radius)).ceil() as usize;
+                    for li in 0..=n {
+                        let prob = 0.5 - (li as f64 / n as f64) / 2.0;
+                        let x = farther_point.x * prob + new_points[j].x * (1.0 - prob);
+                        let y = farther_point.y * prob + new_points[j].y * (1.0 - prob);
+                        if can_cut(
+                            x, y,
+                        ) {
+                            let prob = 0.5 - (
+                                if li > 0 {
+                                    li - 1
+                                } else {
+                                    li
+                                } as f64
+                                / n as f64
+                            ) / 2.0;
 
-                let mut farthest_point_needs_to_be_cut_jk = None;
-                let distance_jk = new_points[j].distance_to(&new_points[k]);
-                let n = 4 * (distance_jk / tool_radius).ceil() as usize;
-                for li in 0..=n {
-                    let prob = 0.5 - (li as f64 / n as f64) / 2.0;
-                    let x = new_points[k].x * prob + new_points[j].x * (1.0 - prob);
-                    let y = new_points[k].y * prob + new_points[j].y * (1.0 - prob);
-                    if can_cut(
-                        x, y,
-                    ) {
-                        farthest_point_needs_to_be_cut_jk = Some(
-                            lines_and_curves::Point::from(
-                                x, y,
-                            )
-                        );
-                        break;
+                            let x = farther_point.x * prob + new_points[j].x * (1.0 - prob);
+                            let y = farther_point.y * prob + new_points[j].y * (1.0 - prob);
+
+                            farthest_point_needs_to_be_cut = Some(
+                                lines_and_curves::Point::from(
+                                    x, y,
+                                )
+                            );
+                            break;
+                        }
                     }
-                }
+
+                    return farthest_point_needs_to_be_cut;
+                };
+
+                let distance_ij = new_points[i].distance_to(&new_points[j]);
+                let farthest_point_needs_to_be_cut_ij = find_farthest_point_needs_to_be_cut(
+                    distance_ij,
+                    new_points[i],
+                );
+
+                let distance_jk = new_points[j].distance_to(&new_points[k]);
+                let farthest_point_needs_to_be_cut_jk = find_farthest_point_needs_to_be_cut(
+                    distance_jk,
+                    new_points[k],
+                );
 
                 let needs_cut_tight_angle = !(
                     angle.is_nan() ||
@@ -2113,46 +2207,53 @@ pub trait CNCPath {
                 let dji = (new_points[i] - new_points[j]).normalize();
                 let djk = (new_points[k] - new_points[j]).normalize();
 
-                let ij_point = if
-                    length_from_point_j <
-                    distance_ij / 2.0
-                    && if let Some(_) = farthest_point_needs_to_be_cut_ij { true } else { false }
-                {
-                    if let Some(point) = farthest_point_needs_to_be_cut_ij {
-                        point
+                let get_point = |
+                    max_distance: f64,
+                    farthest_point_from_j: Option<lines_and_curves::Point>,
+                    dj: lines_and_curves::Point,
+                    end_point: lines_and_curves::Point,
+                | {
+                    if
+                        length_from_point_j <
+                        max_distance / 2.0
+                        && if let Some(_) = farthest_point_from_j { true } else { false }
+                    {
+                        if let Some(point) = farthest_point_from_j {
+                            let d = point.distance_to(&new_points[j]);
+                            if length_from_point_j > d {
+                                dj * length_from_point_j + new_points[j]
+                            } else {
+                                point
+                            }
+                        } else {
+                            (new_points[i] + new_points[j]) / 2.0
+                        }
+                    } else if needs_cut_tight_angle && (
+                        length_from_point_j >
+                        max_distance
+                    ) {
+                        end_point
+                    } else if needs_cut_tight_angle {
+                        dj * length_from_point_j + new_points[j]
                     } else {
-                        (new_points[i] + new_points[j]) / 2.0
+                        new_points[j]
                     }
-                } else if needs_cut_tight_angle && (
-                    length_from_point_j >
-                    distance_ij
-                ) {
-                    dji * distance_ij + new_points[j]
-                } else if needs_cut_tight_angle {
-                    dji * length_from_point_j + new_points[j]
-                } else {
-                    new_points[j]
                 };
 
-                let jk_point = if
-                    length_from_point_j < distance_jk / 2.0 &&
-                    if let Some(_) = farthest_point_needs_to_be_cut_jk { true } else { false }
-                {
-                    if let Some(point) = farthest_point_needs_to_be_cut_jk {
-                        point
-                    } else {
-                        (new_points[j] + new_points[k]) / 2.0
-                    }
-                } else if needs_cut_tight_angle && (
-                    length_from_point_j >
-                    distance_jk
-                ) {
-                    djk * distance_jk + new_points[j]
-                } else if needs_cut_tight_angle {
-                    djk * length_from_point_j + new_points[j]
-                } else {
-                    new_points[j]
-                };
+
+                let ij_point = get_point(
+                    distance_ij,
+                    farthest_point_needs_to_be_cut_ij,
+                    dji,
+                    new_points[i],
+                );
+
+                let jk_point = get_point(
+                    distance_jk,
+                    farthest_point_needs_to_be_cut_jk,
+                    djk,
+                    new_points[k],
+                );
 
                 if !is_up && cnc_router.get_point().distance_to(
                     &ij_point
@@ -2201,7 +2302,7 @@ pub trait CNCPath {
                     feed_rate, false,
                 );
             }
-        } else if let ToolType::PartialCutTextRadius(_, _) = tool_type {
+        } else if let ToolType::PartialContourRadius(_, _, _) = tool_type {
             let mut is_up = true;
             for i in 0..new_points.len() {
                 let j = (i+1) % new_points.len();
@@ -2300,3 +2401,32 @@ pub trait CNCPath {
     }
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    pub fn test_shape_type() {
+        let mut shape = ShapeType::new();
+        assert_eq!(shape.0, 0);
+
+        shape.set_text(true);
+        assert_eq!(shape.0, 1);
+        shape.set_text(false);
+        assert_eq!(shape.0, 0);
+
+        shape.set_braille(true);
+        assert_eq!(shape.0, 2);
+        shape.set_braille(false);
+        assert_eq!(shape.0, 0);
+        assert!(!shape.is_braille());
+        assert!(!shape.is_text());
+
+        shape.set_text(true);
+        shape.set_braille(true);
+        assert_eq!(shape.0, 3);
+
+        assert!(shape.is_braille());
+        assert!(shape.is_text());
+    }
+}

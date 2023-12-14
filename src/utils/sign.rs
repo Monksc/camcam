@@ -12,8 +12,9 @@ pub struct Sign<T : lines_and_curves::Intersection + Clone> {
 
 #[derive(Debug, Clone)]
 pub struct Shape<T: lines_and_curves::Intersection> {
-    tool_type: cnc_router::ToolType,
+    tool_type: cnc_router::ShapeType,
     lines: Vec<T>,
+    bounding_rect: lines_and_curves::Rectangle,
     layers: std::collections::HashMap
         <usize, Vec<(f64, Vec<f64>)>>, // [x_index][x] = [y]
 }
@@ -83,8 +84,21 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         &self,
         bit_radius: f64,
         do_cut_on_odd: bool,
-        add_padding_to: &Vec<(cnc_router::ToolType, f64)>,
+        add_padding_to: &Vec<(cnc_router::ShapeType, f64)>,
     ) -> Self {
+        // TODO: Remove this eventually but fix the issue of braille sometimes
+        // overlapping after growth sometimes leaving random circles where it should cut
+        if bit_radius > 0.08 {
+            return self.expand_lines(
+                bit_radius - 0.08,
+                do_cut_on_odd,
+                add_padding_to
+            ).expand_lines(
+                0.08,
+                do_cut_on_odd,
+                &Vec::new(),
+            );
+        }
         // if bit_radius > 0.01 {
         //     return self.expand_lines(0.01, do_cut_on_odd, add_padding_to)
         //         .expand_lines(bit_radius-0.01, do_cut_on_odd, &Vec::new());
@@ -93,7 +107,7 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         let mut sign_copy = self.clone();
 
         let mut groups_of_intersections : HashMap<
-            cnc_router::ToolType,
+            cnc_router::ShapeType,
             Vec<(Vec<T>, bool)>
         > = HashMap::new();
 
@@ -112,7 +126,7 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
             }
             let mut addition_radius = 0.0;
             for (p_type, p_len) in add_padding_to {
-                if p_type.is_same_type(&shape.tool_type()) {
+                if p_type.subset_of(&shape.tool_type()) {
                     addition_radius += p_len;
                 }
             }
@@ -141,6 +155,7 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
             let mut new_group : Vec<Shape<T>> =
                 lines_and_curves::Intersection::remove_touching_shapes(
                     &groups,
+                    bit_radius >= 0.0,
                 )
                 .iter()
                 .map(|shape : &(Vec<T>, bool)| {
@@ -192,6 +207,7 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         // Should fix actual issue consisting of Intersection::y(x) for
         // LineSegment on lines where two lines connect on one side of x given
         // and on straight lines.
+
         let epsilon = 0.00000001;
         self.sees_even_odd_lines_before_helper(x, y, do_cut_on_odd, can_be_equal) +
             self.sees_even_odd_lines_before_helper(x+epsilon, y, do_cut_on_odd, can_be_equal) +
@@ -307,16 +323,42 @@ impl<T: lines_and_curves::Intersection + Clone> Sign<T> {
         xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
         return xs;
     }
+
+    pub fn add_xs_layers(&mut self, start_x: f64, increment_x: f64) {
+        for shape in &mut self.shapes {
+            shape.add_xs_layers(start_x, increment_x);
+        }
+    }
 }
 
 impl<T: lines_and_curves::Intersection> Shape<T> {
     pub fn from(
-        tool_type: cnc_router::ToolType,
+        tool_type: cnc_router::ShapeType,
         lines: Vec<T>,
     ) -> Self {
+        let bounding_box = if lines.len() > 0 {
+            lines[0].bounding_box()
+        } else {
+            lines_and_curves::Rectangle::from(
+                lines_and_curves::Point::from(
+                    -2.0, -2.0,
+                ),
+                lines_and_curves::Point::from(
+                    -1.0, -1.0,
+                ),
+            )
+        };
+
+        let bounding_box = lines
+            .iter()
+            .fold(bounding_box, |l, r| {
+                l.join(&r.bounding_box())
+            });
+
         Self {
             tool_type: tool_type,
             lines: lines_and_curves::Intersection::force_counter_clockwise(&lines),
+            bounding_rect: bounding_box,
             layers: std::collections::HashMap::new(),
         }
     }
@@ -325,7 +367,7 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
         lines_and_curves::bounding_box(&self.lines)
     }
 
-    pub fn tool_type(&self) -> cnc_router::ToolType {
+    pub fn tool_type(&self) -> cnc_router::ShapeType {
         self.tool_type
     }
 
@@ -351,12 +393,84 @@ impl<T: lines_and_curves::Intersection> Shape<T> {
         return closest;
     }
 
+    pub fn add_xs_layers(&mut self, start_x: f64, increment_x: f64) {
+        let mut y_values_and_is_inside = Vec::new();
+
+        let first_i : i64 = ((self.bounding_rect.min_x() - start_x) / increment_x).floor() as i64;
+        let last_i : i64 = ((self.bounding_rect.max_x() - start_x) / increment_x).ceil() as i64;
+        for _ in first_i..=last_i {
+            y_values_and_is_inside.push(Vec::new());
+        }
+
+        for (i, line) in self.lines.iter().enumerate() {
+            let line_box = line.bounding_box();
+            let min_x = line_box.min_x();
+            let max_x = line_box.max_x();
+
+            let mut start_i : i64 = ((min_x - start_x) / increment_x).floor() as i64;
+            let end_i : i64 = ((max_x - start_x) / increment_x).ceil() as i64;
+
+            while start_i <= end_i {
+                let x = start_i as f64 * increment_x + start_x;
+
+                for y in line.y(&self.lines[(i+1) % self.lines.len()], x) {
+                    y_values_and_is_inside[(start_i - first_i) as usize].push(y);
+                }
+
+                start_i += 1;
+            }
+        }
+
+        for i in 0..y_values_and_is_inside.len() {
+            let x = (first_i + i as i64) as f64 * increment_x + start_x;
+            let x_index = f64_to_usize_block(x);
+
+            let mut y_values = Vec::new();
+            y_values_and_is_inside[i].sort_by(|a, b| {
+                let result = a.0.partial_cmp(&b.0).unwrap();
+                if result == std::cmp::Ordering::Equal {
+                    if a.1 == b.1 {
+                        std::cmp::Ordering::Equal
+                    } else if a.1 {
+                        std::cmp::Ordering::Less
+                    } else {
+                        std::cmp::Ordering::Greater
+                    }
+                } else {
+                    result
+                }
+            });
+
+            let mut last_is_inside = false;
+            for (y_value, is_inside) in &y_values_and_is_inside[i] {
+                if *is_inside != last_is_inside {
+                    y_values.push(*y_value);
+                    last_is_inside = *is_inside;
+                }
+            }
+
+            match self.layers.get_mut(&x_index) {
+                Some(arr) => {
+                    arr.push((x, y_values));
+                },
+                None => {
+                    self.layers.insert(x_index, vec![(x, y_values)]);
+                }
+            }
+        }
+    }
+
     pub fn add_x_layer(&mut self, x: f64) {
+        if !self.bounding_rect.contains_x(x) {
+            return;
+        }
         if self.get_y_values(x).len() > 0 {
             return;
         }
+
         let x_index = f64_to_usize_block(x);
 
+        // TODO: Speed this up by looking at only the lines that are near x
         let mut y_values_and_is_inside = Vec::new();
         for (i, line) in self.lines.iter().enumerate() {
             for y in line.y(&self.lines[(i+1) % self.lines.len()], x) {
@@ -618,7 +732,7 @@ mod test {
             ),
             vec![
                 sign::Shape::from(
-                    cnc_router::ToolType::FullCutText,
+                    cnc_router::ShapeType::text(),
                     lines_and_curves::LineSegment::create_path(&vec![
                         lines_and_curves::Point::from(17.5, 15.0),
                         lines_and_curves::Point::from(20.0, 17.5),
