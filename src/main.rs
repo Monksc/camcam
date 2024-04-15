@@ -57,7 +57,7 @@ fn main() {
                 front_angle: 0.0,
                 back_angle: 0.0,
                 orientation: 0.0,
-                tool_type: cnc_router::ToolType::FullCutBroad,
+                tool_type: cnc_router::ToolType::FullCutBroad(100.0, false),
                 smoothness: cnc_router::Smoothness::Medium,
                 feed_rate_of_cut: 180.0,
                 feed_rate_of_drill: 50.0,
@@ -317,6 +317,7 @@ fn main() {
         0.1, // z_axis_off_cut
         -0.155, // depth_of_cut
         "012345 (The Square)",
+        String::from("(Made in main.rs of gcode lib)")
     );
 
     // Tight inner line

@@ -20,4 +20,5 @@ geo-clipper = "0.7.3"
 geo-types = "0.7.3"
 serde = { version = "1.0.183", features = ["derive"] }
 once_cell = "1.19.0"
+rand = "0.8.5"
 
